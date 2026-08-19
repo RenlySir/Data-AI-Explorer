@@ -28,13 +28,14 @@
 | 18 | [模块与功能详细设计方案](企业AI落地平台-模块与功能详细设计方案.md) | 8 个一级模块、63 项功能、输入产出、门禁、状态与代码追踪 |
 | 19 | [模块 Agent 功能开发说明](模块Agent功能开发说明.md) | 一键装配、模型绑定、工具白名单、审批策略、接口与验收边界 |
 | 20 | [七阶段实施状态](企业AI落地平台-七阶段实施状态.md) | 附件实施清单与当前可运行代码、验证结果、生产化边界对照 |
+| 21 | [TiDB全面替换专项实施方案](TiDB全面替换专项实施方案.md) | 平台内部数据库统一 TiDB、Schema、HTAP、资源组、迁移、CDC、BR 与验收 |
 
 ## 统一技术与交付约定
 
 - 控制面：Java 21 + Spring Boot 3 模块化单体；Python 3.12 AI/采集 Worker。
 - 前端：React + TypeScript + Vite；API 前缀为 `/api/v1`。
 - 工作流与事件：Temporal + Kafka；异步请求返回 `202 + operation_id`，状态通过 SSE 推送。
-- 数据：优先使用 TiDB 保存平台元数据和可查询业务数据；本地 Compose 仍提供 PostgreSQL、Redis、OpenSearch、S3/MinIO 作为后续生产扩展位，全链路使用 OpenTelemetry。
+- 数据：平台内部权威数据统一使用 TiDB；Redis、OpenSearch、S3/MinIO 是缓存、检索和对象存储扩展位，外部 MySQL 仅作为用户主动配置的数据源，全链路使用 OpenTelemetry。
 - 模型：通过 Model Gateway 统一接入 OpenAI-Compatible、Ollama、vLLM、TGI、云模型和企业自建模型。
 - 安全：默认只读、RBAC + ABAC、RLS、SQL AST 校验、Executor 隔离、审批、验证、回滚和全量审计。
 - 部署：支持 Docker Compose 本地版、Helm/Kubernetes 内网版和无公网完全离线版。
@@ -57,7 +58,7 @@
 ./scripts/dev.sh
 ```
 
-打开 <http://localhost:5173> 访问前端；API 文档为 <http://localhost:8080/docs>。基础设施端口为 PostgreSQL `5432`、Redis `6379`、MinIO API `9000`，MinIO 控制台为 <http://localhost:9001>。首次启动会自动创建 `.env`；可按需修改后重新运行。
+打开 <http://localhost:5173> 访问前端；API 文档为 <http://localhost:8080/docs>。基础设施端口为 TiDB SQL `4000`、TiDB Status `10080`、Redis `6379`、MinIO API `9000`，MinIO 控制台为 <http://localhost:9001>。首次启动会自动创建 `.env`，API 会在 TiDB 中创建 `aegis_platform` 元数据表；可按需修改后重新运行。
 
 停止服务：
 

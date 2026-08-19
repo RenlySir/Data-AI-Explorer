@@ -22,6 +22,7 @@ class SmartQueryApiTest(unittest.TestCase):
         health = self.client.get("/health")
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json()["status"], "ok")
+        self.assertEqual(health.json()["database"], "tidb")
         self.assertTrue(health.headers.get("X-Request-ID", "").startswith("req-"))
         self.assertEqual(health.headers["X-Content-Type-Options"], "nosniff")
         metrics = self.client.get("/metrics")

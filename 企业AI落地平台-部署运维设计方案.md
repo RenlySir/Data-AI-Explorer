@@ -25,7 +25,7 @@
 ```text
 用户区
   → DMZ：WAF / Ingress / SSO 回调
-  → 控制区：Web、BFF、PostgreSQL、Redis、Temporal、Kafka
+  → 控制区：Web、BFF、TiDB、Redis、Temporal、Kafka
   → 数据区：Connector、OpenSearch、对象存储、数据库只读代理
   → 执行区：Executor Gateway、Executor Agent、目标 K8s/主机
   → 模型区：vLLM/Ollama/TGI/自建模型服务
@@ -37,7 +37,7 @@
 
 ### 4.1 服务
 
-`web`、`server`、`ai-worker`、`connector-worker`、`postgres`、`redis`、`opensearch`、`minio`、`kafka`、`temporal`。`local-model` Profile 可启动 Ollama；未启用时通过 `.env` 指向自建或云模型。
+`web`、`server`、`ai-worker`、`connector-worker`、`tidb`、`redis`、`opensearch`、`minio`、`kafka`、`temporal`。`local-model` Profile 可启动 Ollama；未启用时通过 `.env` 指向自建或云模型。
 
 ### 4.2 安装流程
 
@@ -55,7 +55,7 @@ cp .env.example .env
 
 ### 4.3 本地备份
 
-`aegis backup` 备份 PostgreSQL、配置清单、MinIO 元数据和模型 Provider 配置引用，不导出明文 Secret。默认写入指定目录，生成 manifest、校验和恢复说明；本地模型权重单独备份。
+`aegis backup` 使用 BR 备份 TiDB、配置清单、MinIO 元数据和模型 Provider 配置引用，不导出明文 Secret。默认写入指定对象存储目录，生成 manifest、校验和恢复说明；本地模型权重单独备份。
 
 ## 4.4 三节点 TiDB 演示部署（已提供脚本）
 
@@ -103,11 +103,11 @@ helm upgrade --install aegis deploy/helm/aegis \
   -n aegis-control --create-namespace -f values-prod.yaml --atomic --timeout 15m
 ```
 
-生产 values 必须通过 Git 管理，Secret 使用 External Secrets/Vault Agent 注入。禁止把密钥写进 Helm values、镜像或 Git。
+生产 values 必须通过 Git 管理，TiDB 使用 TiDB Operator/TiUP 管理，Secret 使用 External Secrets/Vault Agent 注入。禁止把密钥写进 Helm values、镜像或 Git。
 
 ### 5.3 资源与高可用基线
 
-Web/Server/AI Worker/Connector 至少 2 副本，配置 requests/limits、HPA、PDB、反亲和和 topology spread。PostgreSQL 使用托管 HA 或 Patroni；Kafka、OpenSearch 至少 3 节点；Temporal 使用 HA 数据库；MinIO/对象存储开启版本化和跨节点冗余。
+Web/Server/AI Worker/Connector 至少 2 副本，配置 requests/limits、HPA、PDB、反亲和和 topology spread。TiDB 使用 TiDB Operator 或 TiUP 管理 HA，按需部署 TiFlash、TiCDC 和 Prometheus/Grafana；Kafka、OpenSearch 至少 3 节点；Temporal 使用 TiDB/MySQL 兼容 HA 数据库；MinIO/对象存储开启版本化和跨节点冗余。
 
 GPU 模型节点使用污点 `workload=aegis-model`、专用 RuntimeClass、显存指标和独立 HPA。模型权重挂载只读 PVC；升级采用新 Deployment 灰度，不原地覆盖权重。
 
@@ -173,19 +173,19 @@ P0：控制面不可用、数据泄露、Executor 未授权执行；立即电话
 
 ## 10. 备份、恢复与容灾
 
-备份对象：PostgreSQL 全量/WAL、MinIO 对象、Kafka 关键 Topic、Temporal 数据、OpenSearch 可重建索引、Helm values、模型 Provider 配置、审计归档。
+备份对象：TiDB BR 全量/增量、MinIO 对象、Kafka 关键 Topic、Temporal 数据、OpenSearch 可重建索引、Helm values、模型 Provider 配置、审计归档。
 
 建议策略：每日全量、15 分钟 WAL；对象存储版本化；审计 WORM；OpenSearch 以主数据重建为主。每季度进行跨节点恢复和完整业务演练，验证登录、问数、Incident、审批、审计和回滚。
 
-恢复顺序：基础设施 → Vault/CA → PostgreSQL → Kafka/Temporal → Redis → OpenSearch/MinIO → Server/Worker → Model Gateway → Executor Gateway。恢复后暂停自动执行，人工确认数据一致性和审批状态后再开放。
+恢复顺序：基础设施 → Vault/CA → TiDB BR → Kafka/Temporal → Redis → OpenSearch/MinIO → Server/Worker → Model Gateway → Executor Gateway。恢复后暂停自动执行，人工确认数据一致性和审批状态后再开放。
 
 ## 11. 发布与升级
 
-场景中心生产部署需要额外配置外部系统 Adapter、短期凭证和 Runbook 白名单。建议先启用只读模式和报告模式，再按场景逐项开放低风险动作；所有高风险动作必须验证审批人权限、双人审批（如适用）、幂等键、超时撤销、执行证据和回滚。场景运行状态迁移到 PostgreSQL/Temporal 后，升级演练需验证服务重启恢复、重复消息去重和审批等待不丢失。
+场景中心生产部署需要额外配置外部系统 Adapter、短期凭证和 Runbook 白名单。建议先启用只读模式和报告模式，再按场景逐项开放低风险动作；所有高风险动作必须验证审批人权限、双人审批（如适用）、幂等键、超时撤销、执行证据和回滚。场景运行状态迁移到 TiDB/Temporal 后，升级演练需验证服务重启恢复、重复消息去重和审批等待不丢失。
 
 发布流水线：代码检查 → 单测/契约/安全 → 镜像构建与 SBOM → AI 评测 → 测试环境 → 预生产 → Canary/Blue-Green → 生产。
 
-数据库采用 expand/contract：先新增兼容字段/表，再发布应用，确认无旧版本读写后删除旧结构。Helm 使用 `--atomic`；升级前自动备份和 health check；失败自动回滚应用，但数据库迁移回滚需使用兼容迁移脚本。
+数据库采用 expand/contract：先新增兼容字段/表，再发布应用，确认无旧版本读写后删除旧结构。TiDB DDL 通过版本化迁移执行，不在应用启动时做不可逆变更。Helm 使用 `--atomic`；升级前执行 BR 备份和 health check；失败自动回滚应用，但数据库迁移回滚需使用兼容迁移脚本。
 
 模型升级：新模型先注册 `DRAFT`，通过能力探测和离线评测，影子流量对比质量/延迟/成本，最后切换路由；保留旧模型和 Prompt 版本，可一键回退。
 
@@ -215,7 +215,7 @@ P0：控制面不可用、数据泄露、Executor 未授权执行；立即电话
 
 ## 14. 容量与扩容
 
-当 API P95 连续 15 分钟超过 500ms，扩容 Web/Server；Kafka lag 超阈值扩容消费者；模型 GPU 显存超过 85% 或首 token 超 SLO 扩容 GPU/切换模型；OpenSearch 磁盘 70% 触发扩容或生命周期清理；PostgreSQL 连接池超过 70% 评估读副本/拆分查询。
+当 API P95 连续 15 分钟超过 500ms，扩容 Web/Server；Kafka lag 超阈值扩容消费者；模型 GPU 显存超过 85% 或首 token 超 SLO 扩容 GPU/切换模型；OpenSearch 磁盘 70% 触发扩容或生命周期清理；TiDB RU/连接池/Region 热点超过阈值时评估资源组、读引擎和节点扩容。
 
 租户限额：并发问数、Token、扫描量、结果存储、事件速率和 Agent 预算。超额返回可解释的配额错误，不允许通过重试绕过。
 
@@ -247,15 +247,15 @@ P0：控制面不可用、数据泄露、Executor 未授权执行；立即电话
 | Knowledge Worker | 可选关闭 | parser/index/embed/rerank | 文档队列、Chunk 吞吐、GPU |
 | Scenario/Temporal | 演示内存 | temporal server/worker | 运行实例、步骤耗时 |
 | Connector/Executor | 不连接生产 | adapter、executor-gateway | 外部调用速率、动作队列 |
-| 数据底座 | PostgreSQL、Redis、MinIO | HA PostgreSQL、Redis、S3/OpenSearch/Vector | 数据量、索引、保留期 |
+| 数据底座 | TiDB、Redis、MinIO | HA TiDB、Redis、S3/OpenSearch/Vector | 数据量、索引、保留期 |
 
-本地环境默认只开放 Web、API、PostgreSQL、Redis、MinIO；生产 Adapter、模型 Provider 和 Executor 必须通过环境变量显式启用，默认关闭。
+本地环境默认只开放 Web、API、TiDB、Redis、MinIO；生产 Adapter、模型 Provider 和 Executor 必须通过环境变量显式启用，默认关闭。
 
 ## 19. 配置与密钥边界
 
 配置分为 `platform`、`datasource`、`model`、`connector`、`policy`、`observability` 六类。配置文件只存引用和非敏感参数；密钥、数据库密码、模型 Token 和机器凭证存 Vault/OpenBao，通过短期租约注入。前端只显示 Provider 名称、能力和健康，不回显密钥。
 
-关键环境变量：`API_BASE_URL`、`DATABASE_URL`、`REDIS_URL`、`S3_ENDPOINT`、`DATASET_ALLOWED_ROOTS`、`MODEL_GATEWAY_URL`、`MODEL_LOCAL_ONLY`、`EXECUTOR_ENABLED`、`CORS_ALLOW_LOCALHOST`、`CORS_ALLOW_ORIGINS`、`OTEL_EXPORTER_OTLP_ENDPOINT`。生产启动前执行配置 Schema 校验，缺少安全边界直接阻断。
+关键环境变量：`TIDB_HOST`、`TIDB_PORT`、`TIDB_DATABASE`、`AEGIS_PLATFORM_DB_DATABASE`、`REDIS_URL`、`S3_ENDPOINT`、`DATASET_ALLOWED_ROOTS`、`MODEL_GATEWAY_URL`、`MODEL_LOCAL_ONLY`、`EXECUTOR_ENABLED`、`CORS_ALLOW_LOCALHOST`、`CORS_ALLOW_ORIGINS`、`OTEL_EXPORTER_OTLP_ENDPOINT`。生产启动前执行配置 Schema 校验，缺少安全边界直接阻断。
 
 本地版本默认 `CORS_ALLOW_LOCALHOST=true`，支持 localhost/127.0.0.1 动态开发端口。预生产和生产必须设置为 `false`，并在 `CORS_ALLOW_ORIGINS` 中列出网关实际 HTTPS Origin；不得使用 `*` 与凭证模式组合。变更 Origin 后需要执行 OPTIONS 预检和登录、问数、功能目录三条浏览器回归。
 
@@ -263,7 +263,7 @@ P0：控制面不可用、数据泄露、Executor 未授权执行；立即电话
 
 发布顺序：数据库向前兼容迁移 → API → Worker → Web → Connector/Executor。产品目录和策略先在测试租户发布，完成契约测试后灰度。回滚只回滚镜像和配置，不回滚已写入的审计；数据库迁移使用 expand/contract，索引使用版本别名。
 
-备份：PostgreSQL 每日全备 + WAL，MinIO 版本与跨节点副本，OpenSearch/Vector DB 保存快照；每月演练恢复并校验资产、知识文档、审批和审计数量。目标基线：控制面 RPO ≤15 分钟、RTO ≤60 分钟；索引可重建但原文不可丢失。
+备份：TiDB 使用 BR 每日全备 + 增量，MinIO 版本与跨节点副本，OpenSearch/Vector DB 保存快照；每月演练恢复并校验资产、知识文档、审批和审计数量。目标基线：控制面 RPO ≤15 分钟、RTO ≤60 分钟；索引可重建但原文不可丢失。
 
 ## 21. 按模块的运行手册
 

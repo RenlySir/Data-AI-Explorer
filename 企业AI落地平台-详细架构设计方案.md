@@ -26,7 +26,7 @@
 | ADR-01 | MVP 使用模块化单体，AI Worker、Connector Worker、Executor 独立部署 | 降低分布式事务和运维成本，又隔离高负载与高风险任务 |
 | ADR-02 | Java 21 + Spring Boot 3 为业务主后端，Python 3.12 为 AI/分析 Worker | 企业权限/事务能力成熟，Python 生态承载 LLM、RCA 和 SQL 分析 |
 | ADR-03 | Temporal 承载长流程，Kafka 承载事件流 | 审批、等待、重试、补偿需要持久化工作流；高吞吐事件需要解耦 |
-| ADR-04 | PostgreSQL 为控制面主库，OpenSearch 为检索与事件查询，Redis 为缓存 | 职责明确、生态成熟；业务数据不复制进控制面 |
+| ADR-04 | TiDB 为控制面主库，OpenSearch 为检索与事件查询，Redis 为缓存 | 使用 MySQL 协议统一事务与 HTAP；业务数据不复制进控制面 |
 | ADR-05 | 对象存储保存证据、导出、模型评测和执行产物 | 避免大对象进入关系库，支持生命周期管理 |
 | ADR-06 | 模型统一经过 Model Gateway，内部协议兼容 OpenAI API | 统一接入云模型、本地模型和企业自建模型，屏蔽供应商差异 |
 | ADR-07 | 生产执行使用独立 Executor Agent | 控制面不持有生产永久凭证，缩小攻击面 |
@@ -47,7 +47,7 @@ Aegis Core（模块化单体）
 ├─ Task/Approval         ├─ Agent/Decision
 ├─ Policy/Audit          └─ Notification
    │              │                 │
-PostgreSQL     Kafka/Temporal    Redis/OpenSearch/MinIO
+TiDB           Kafka/Temporal    Redis/OpenSearch/MinIO
    │              │
 AI Worker     Connector Worker ── 企业数据与可观测系统（只读）
    │              │
@@ -118,7 +118,7 @@ Server 内部模块禁止直接访问其他模块的数据表，只通过应用�
 - Context Builder：按工作区、权限、领域、可信度检索，禁止把无权 Schema 发给模型。
 - SQL Planner：优先将已定义指标确定性编译为 SQL；开放式分析才调用 LLM。
 - SQL Guard：基于 Apache Calcite/JSqlParser 或 SQLGlot AST，仅允许 SELECT/CTE；拦截注释绕过、多语句、DDL/DML、危险函数和跨域访问。
-- Query Proxy：使用只读账号、事务只读、超时、最大行数、最大扫描量和并发配额；结果集落临时对象存储，默认 24 小时过期。
+- Query Proxy：使用 TiDB 只读账号、SQL AST 只读校验、超时、最大行数、最大扫描量和并发配额；TiDB 当前版本的 `SET TRANSACTION READ ONLY` 为受控 no-op，不将其作为安全边界；结果集落临时对象存储，默认 24 小时过期。
 - Result Verifier：空结果、数量级、同比环比、单位、维度完整性和抽样复算；失败时不生成确定性结论。
 
 问数状态机：`RECEIVED → PLANNING → NEED_CLARIFICATION | VALIDATING → EXECUTING → VERIFYING → COMPLETED | REJECTED | FAILED`。
@@ -135,13 +135,13 @@ urn:aegis:{tenant}:{platform}:{instance}:{database}:{schema}:{object}[#{column}]
 
 血缘边包含 source、target、edge_type、extraction_method、confidence、observed_at、valid_from/to。SQL 解析生成表级/字段级血缘；解析失败进入人工治理队列。
 
-OpenSearch 保存资产搜索文档；PostgreSQL 保存权威元数据；MVP 血缘图使用 PostgreSQL 递归 CTE，资产超过 100 万或三跳查询 P95 超过 2 秒时再引入 Neo4j/JanusGraph。
+OpenSearch 保存资产搜索文档；TiDB 保存权威元数据；MVP 血缘图使用 TiDB 关系查询，资产超过 100 万或三跳查询 P95 超过 2 秒时再引入 Neo4j/JanusGraph。
 
 SQL 资产流程：采集 → 指纹归一化 → 聚类去重 → 解析引用 → 风险评分 → 绑定负责人/指标 → 归档。严禁存储未脱敏的 SQL Literal 和用户隐私参数。
 
 当前数据关系切片以 `/api/v1/data-relationships/{datasource_id}` 为聚合边界。元数据采集读取全部授权业务 Schema 的 `TABLES/COLUMNS/KEY_COLUMN_USAGE`；SQL 采集读取 TiDB `STATEMENTS_SUMMARY_HISTORY`，按 Digest 和累计执行次数做幂等增量，再以 sqlglot MySQL/TiDB 方言 AST 提取表、别名、JOIN 与字段等值条件。边同时生成 table/field 两个层级，并记录 `source_type/observation_count/confidence/first_seen_at/last_seen_at`。采集 SQL 绝不送入 Query Executor。
 
-PoC 暂存进程内关系快照，并由 FastAPI 进程内常驻任务每 30 秒增量采集；页面关闭后任务仍运行，但服务重启会丢失开关和检查点。生产必须迁移到 PostgreSQL `lineage_edge/sql_observation/collector_checkpoint`，由租户隔离的 Connector Worker 按游标调度并持有任务租约，失败进入重试队列，前端只读服务端快照。读取语句摘要的账号只授予必要监控视图权限，不复用生产写账号。
+PoC 暂存进程内关系快照，并由 FastAPI 进程内常驻任务每 30 秒增量采集；页面关闭后任务仍运行，但服务重启会丢失开关和检查点。生产必须迁移到 TiDB `lineage_edge/sql_observation/collector_checkpoint`，由租户隔离的 Connector Worker 按游标调度并持有任务租约，失败进入重试队列，前端只读服务端快照。读取语句摘要的账号只授予必要监控视图权限，不复用生产写账号。
 
 ### 5.5 AIOps Engine
 
@@ -320,7 +320,7 @@ Kafka Topic：`metadata.changed.v1`、`query.completed.v1`、`observability.raw.
 
 ### 9.1 开发与 PoC
 
-Docker Compose 支持在一台 Linux/macOS 主机本地部署 Web、Server、AI Worker、PostgreSQL、Redis、OpenSearch、MinIO、Kafka、Temporal，并可选启动 Ollama。默认提供 `core`、`observability`、`local-model` 三个 Profile；8 核 CPU、32GB 内存、100GB 磁盘可运行基础版，不启动本地大模型时最低可降至 4 核/16GB。
+Docker Compose 支持在一台 Linux/macOS 主机本地部署 Web、Server、AI Worker、TiDB、Redis、OpenSearch、MinIO、Kafka、Temporal，并可选启动 Ollama。默认提供 `core`、`observability`、`local-model` 三个 Profile；8 核 CPU、32GB 内存、100GB 磁盘可运行基础版，不启动本地大模型时最低可降至 4 核/16GB。
 
 本地安装包必须提供 `.env.example`、初始化向导、数据库迁移、健康检查、启停/升级/备份脚本和版本锁定的镜像清单。首次启动创建管理员后强制修改口令；默认监听本机或内网地址，不对公网开放。
 
@@ -328,7 +328,7 @@ Docker Compose 支持在一台 Linux/macOS 主机本地部署 Web、Server、AI 
 
 - 至少 3 个 Worker Node，跨可用区部署；Ingress 双副本。
 - Web/Server/Worker 最少 2 副本，配置 HPA、PodDisruptionBudget 和反亲和。
-- PostgreSQL 使用企业托管 HA 或 Patroni；Kafka/OpenSearch 至少 3 节点；对象存储开启版本化。
+- TiDB 使用 TiUP 或 TiDB Operator 部署 HA 集群，可选 TiFlash/TiCDC；Kafka/OpenSearch 至少 3 节点；对象存储开启版本化。
 - Executor Agent 部署在目标安全域，通过 mTLS 主动出站连接 Executor Gateway，不开放入站端口。
 - Namespace 分为 `aegis-control`、`aegis-data`、`aegis-execution`、`aegis-observability`；NetworkPolicy 默认拒绝。
 - Dev/Test/Prod 使用独立集群或至少独立账号、密钥、库和命名空间；禁止共用生产凭证。
@@ -430,7 +430,7 @@ MVP 后优先按真实瓶颈演进：Query/AIOps 独立扩容；引入 CDC 更�
 
 ## 16. 知识库与 RAG 子系统补充
 
-知识库采用 Loader → Parser → Splitter → Indexer → Hybrid Retriever → ACL Filter → Reranker → Answer Composer → Citation Validator 管线。MVP 使用内存和词法检索；生产使用 PostgreSQL、MinIO、OpenSearch 与 pgvector/Qdrant/Milvus。Embedding、Rerank 和 Chat 通过 Model Gateway 适配云模型与自建模型；权限在召回前下推，回答保存引用和审计。详见《知识库模块产品与研发设计方案》。
+知识库采用 Loader → Parser → Splitter → Indexer → Hybrid Retriever → ACL Filter → Reranker → Answer Composer → Citation Validator 管线。MVP 使用内存和词法检索；生产使用 TiDB、MinIO、OpenSearch 与 TiDB 向量索引/Qdrant/Milvus。Embedding、Rerank 和 Chat 通过 Model Gateway 适配云模型与自建模型；权限在召回前下推，回答保存引用和审计。详见《知识库模块产品与研发设计方案》。
 
 ## 17. v2 模块化运行架构
 
@@ -438,14 +438,14 @@ MVP 后优先按真实瓶颈演进：Query/AIOps 独立扩容；引入 CDC 更�
 
 | 模块 | 领域服务 | 主要存储 | 异步任务/事件 | 外部依赖 |
 |---|---|---|---|---|
-| 智能问数 | Query Service、Semantic Registry、Query Proxy | PostgreSQL、Redis、Query Audit | `query.requested`、`query.completed` | TiDB MCP、Model Gateway、ECharts |
-| 企业知识库 | Knowledge API、Index Worker、Retriever | PostgreSQL、MinIO、OpenSearch、Vector DB | `document.ingest`、`index.ready` | Loader、Embedding、Reranker |
-| 数据资产治理 | Metadata Service、Lineage Worker、Quality Service | PostgreSQL、OpenSearch、对象存储 | `asset.changed`、`lineage.updated` | TiDB、OpenLineage、DataHub/OpenMetadata |
-| AIOps | Event Service、Evidence Worker、RCA Service | PostgreSQL、OpenSearch、时序库 | `incident.opened`、`evidence.collected` | Prometheus、Loki、Tempo、调度 |
-| SQL 优化 | SQL Advisor、TiDB Profile Registry | PostgreSQL、Redis | `sql.analysis.requested` | TiDB EXPLAIN、版本源码/规则 |
-| 场景指挥 | Scenario Orchestrator、Agent Runtime | PostgreSQL、Temporal、对象存储 | `scenario.started`、`step.waiting_approval` | Connector SPI、知识库 Retriever |
-| 任务审批执行 | Policy Service、Approval、Executor Gateway | PostgreSQL、OPA、审计存储 | `approval.requested`、`execution.finished` | Vault/OpenBao、Rundeck/StackStorm |
-| 平台管理 | IAM、Model Gateway、Connector Registry、Audit | PostgreSQL、Redis、Vault | `policy.published`、`provider.health_changed` | OIDC、各类 Provider |
+| 智能问数 | Query Service、Semantic Registry、Query Proxy | TiDB、Redis、Query Audit | `query.requested`、`query.completed` | TiDB MCP、Model Gateway、ECharts |
+| 企业知识库 | Knowledge API、Index Worker、Retriever | TiDB、MinIO、OpenSearch、Vector DB | `document.ingest`、`index.ready` | Loader、Embedding、Reranker |
+| 数据资产治理 | Metadata Service、Lineage Worker、Quality Service | TiDB、OpenSearch、对象存储 | `asset.changed`、`lineage.updated` | TiDB、OpenLineage、DataHub/OpenMetadata |
+| AIOps | Event Service、Evidence Worker、RCA Service | TiDB、OpenSearch、时序库 | `incident.opened`、`evidence.collected` | Prometheus、Loki、Tempo、调度 |
+| SQL 优化 | SQL Advisor、TiDB Profile Registry | TiDB、Redis | `sql.analysis.requested` | TiDB EXPLAIN、版本源码/规则 |
+| 场景指挥 | Scenario Orchestrator、Agent Runtime | TiDB、Temporal、对象存储 | `scenario.started`、`step.waiting_approval` | Connector SPI、知识库 Retriever |
+| 任务审批执行 | Policy Service、Approval、Executor Gateway | TiDB、OPA、审计存储 | `approval.requested`、`execution.finished` | Vault/OpenBao、Rundeck/StackStorm |
+| 平台管理 | IAM、Model Gateway、Connector Registry、Audit | TiDB、Redis、Vault | `policy.published`、`provider.health_changed` | OIDC、各类 Provider |
 
 ```mermaid
 flowchart LR
@@ -464,7 +464,7 @@ flowchart LR
   O --> M
   Q --> D[(TiDB / Data Sources)]
   K --> V[(OpenSearch + Vector DB)]
-  A --> P[(PostgreSQL Metadata)]
+  A --> P[(TiDB Metadata)]
   O --> OBS[(Prometheus / Loki / Tempo)]
   S --> AUD[(Audit + Evidence)]
 ```
@@ -487,7 +487,7 @@ flowchart LR
 |---|---|---|---|
 | 本地演示 | Docker Compose | 演示数据、模拟计划、确定性场景 | 内存/本地卷，禁止生产凭证 |
 | 内网测试 | Kubernetes 单集群 | 只读真实 Adapter、模型评测、dry-run | 测试租户、脱敏数据、全量审计 |
-| 生产 | Kubernetes 多可用区 | 低风险 Runbook + 人工审批高风险 | PostgreSQL HA、对象存储、索引备份、短期凭证 |
+| 生产 | Kubernetes 多可用区 | 低风险 Runbook + 人工审批高风险 | TiDB HA、对象存储、索引备份、短期凭证 |
 | 完全离线 | 离线镜像包 + 私有 Registry | 本地模型、内网连接器、离线评测 | 禁止公网 egress，包与模型验签 |
 
-容量初始基线：API 2 副本、Worker 2 副本、PostgreSQL 3 节点、Redis 3 节点、OpenSearch 3 节点；根据问数并发、文档 Chunk、告警速率和 Agent 步数分别扩容，不做整个平台同步扩容。
+容量初始基线：API 2 副本、Worker 2 副本、TiDB 3 节点、Redis 3 节点、OpenSearch 3 节点；根据问数并发、文档 Chunk、告警速率和 Agent 步数分别扩容，不做整个平台同步扩容。

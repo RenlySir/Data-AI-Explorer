@@ -40,7 +40,7 @@ AI Worker：`workers/ai_worker/{gateway,rag,query,rca,evaluation}`；Connector W
 |---|---|---|
 | Java/Spring | Java 21、Spring Boot 3.4、Spring Security 6 | 控制面 API |
 | Python | 3.12、FastAPI、Pydantic 2 | AI/采集 Worker |
-| 数据库 | PostgreSQL 16 | 控制面权威数据 |
+| 数据库 | TiDB 8.5+/9.x | 控制面权威数据，MySQL 协议，TiKV + 可选 TiFlash |
 | 搜索 | OpenSearch 2.x | 资产、日志、事件检索 |
 | 缓存 | Redis 7.x | 会话、限流、短期状态 |
 | 消息 | Kafka 3.x | 事件流、Outbox 消费 |
@@ -55,7 +55,7 @@ AI Worker：`workers/ai_worker/{gateway,rag,query,rca,evaluation}`；Connector W
 
 ### 4.1 公共字段与约束
 
-所有业务表包含：`id uuidv7`、`tenant_id`、`created_at`、`updated_at`、`created_by`、`version`、`deleted_at`（适用时）。时间以 UTC `timestamptz` 保存。启用 PostgreSQL RLS，应用层每个事务设置 `app.tenant_id`。
+所有业务表包含：`id`（UUIDv7/Snowflake 字符串）、`tenant_id`、`created_at`、`updated_at`、`created_by`、`version`、`deleted_at`（适用时）。时间以 UTC `DATETIME(6)` 保存。TiDB 不使用 PostgreSQL RLS；租户条件由 Repository 强制注入，并以数据库账号、视图和策略层做第二道隔离。时间增长表使用 TiDB Range 分区，所有唯一键包含分区键。TiDB 的 `SET TRANSACTION READ ONLY` 在当前版本为受控 no-op，查询只读必须由 AST、只读账号、超时和资源组共同保证。
 
 所有状态变化写 `domain_event` 或专用历史表；删除优先逻辑删除。敏感字段使用 envelope encryption，数据库内只保存密文和 key_version。
 
@@ -225,7 +225,7 @@ Model Gateway 提供统一 `chat/streamChat/embed/rerank/health` Port，适配 O
 
 ## 11. 消息、事务与一致性
 
-业务事务和 Outbox 写入同一数据库事务；Outbox Publisher 投递 Kafka，成功后标记 sent。消费者使用 inbox/event_id 幂等。跨资源操作使用 Saga/Temporal 补偿，不使用分布式两阶段提交。
+业务事务和 Outbox 写入同一 TiDB 事务；Outbox Publisher 投递 Kafka，成功后标记 sent。TiCDC 可捕获 TiDB 事实变更供下游分析，但不能替代领域 Outbox。消费者使用 inbox/event_id 幂等。跨资源操作使用 Saga/Temporal 补偿，不使用分布式两阶段提交。
 
 Topic：`metadata.changed.v1`、`query.completed.v1`、`observability.raw.v1`、`incident.changed.v1`、`execution.requested.v1`、`audit.created.v1`。分区键优先 `tenant_id` 或 `incident_id`，保证同一聚合有序。
 
@@ -246,7 +246,7 @@ Java、Python、Connector、Executor 统一 OpenTelemetry。指标包括 API 延
 ## 14. 测试与质量门禁
 
 - 单元：领域状态机、策略、SQL Guard、置信度、脱敏，覆盖率 ≥80%。
-- 集成：Testcontainers PostgreSQL/Kafka/Redis/OpenSearch/Temporal。
+- 集成：Testcontainers TiDB/Kafka/Redis/OpenSearch/Temporal。
 - 契约：OpenAPI、SSE、Kafka Schema、Connector SPI。
 - 安全：越权、SQL 注入、Prompt Injection、任意命令、租户串读。
 - AI：固定问数集、SQL 正确性、结果一致性、引用完整性、历史 Incident 回放。
@@ -293,7 +293,7 @@ HTTP Router
   → Outbox Event / Audit
 ```
 
-模块化单体阶段按包隔离：`product_catalog`、`query`、`knowledge`、`governance`、`aiops`、`sql_optimizer`、`scenario`、`approval`、`platform`。每个包禁止直接引用其他包的内存字典；跨边界通过接口或事件。迁移 PostgreSQL 后领域模型保持 API 字段不变。
+模块化单体阶段按包隔离：`product_catalog`、`query`、`knowledge`、`governance`、`aiops`、`sql_optimizer`、`scenario`、`approval`、`platform`。每个包禁止直接引用其他包的内存字典；跨边界通过接口或事件。迁移 TiDB 后领域模型保持 API 字段不变。
 
 统一错误：`{error_code,message,trace_id,retryable,details}`。鉴权失败 401/403，资源不存在 404，状态冲突 409，参数 422，外部依赖 502/504，配额 429。所有写操作返回审计 ID；异步操作返回 operation/run ID。
 
@@ -315,7 +315,7 @@ HTTP Router
 ## 21. 实现顺序与迁移
 
 1. 当前：产品目录 API、内存领域模型、确定性演示数据和契约测试。
-2. Sprint 1：目录/场景/知识库/资产迁移 PostgreSQL，新增 tenant/workspace/ACL 字段。
+2. Sprint 1：目录/场景/知识库/资产迁移 TiDB，新增 tenant/workspace/ACL 字段和时间分区。
 3. Sprint 2：Outbox + Worker + MinIO/OpenSearch，所有异步操作可恢复。
 4. Sprint 3：Model Gateway、TiDB MCP、观测和调度 Connector SPI。
 5. Sprint 4：OPA + Executor Gateway + Temporal，开放低风险 Runbook。

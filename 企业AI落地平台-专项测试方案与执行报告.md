@@ -365,6 +365,19 @@ API 契约与接口集成
 | Docker 镜像构建 | 未执行 | 当前工作环境 Docker daemon 无可用输出，Dockerfile 已提供，需在构建机复验 |
 | Helm 模板渲染 | 未执行 | 当前环境未安装 Helm CLI，chart 已提供，需在 Kubernetes 工具链中执行 `helm template`/安装回滚 |
 | Playwright/Testcontainers/压测 | 待执行 | 需要浏览器、容器运行时和目标基础设施，列入生产退出门禁 |
+
+## 20. 2026-08-20 TiDB 全面替换增量回归
+
+| 检查项 | 结果 | 证据 |
+|---|---|---|
+| 默认本地数据库 | 通过 | Compose 已移除 PostgreSQL 服务，默认启动 `pingcap/tidb:v8.5.2` mocktikv 单节点 |
+| 平台元数据 | 通过 | `aegis_platform.platform_settings`、`audit_events` 在三节点 TiDB 中存在，设置与审计计数可读取 |
+| TiDB 版本 | 通过 | 三台 TiDB 均为 `8.0.11-TiDB-v9.1.0` |
+| TiDB session 策略 | 通过 | 真实连接返回 `tidb_isolation_read_engines=tikv,tiflash`；资源组 `rg_aegis_chatbi`、`rg_aegis_background` 已创建 |
+| 只读安全边界 | 修正 | TiDB 当前版本对 `SET TRANSACTION READ ONLY` 为受控 no-op，代码不再发送不兼容语句，改由只读账号、AST、超时、行数和资源组保证 |
+| 真实 TiDB 数据源 | 通过 | `/chatbi/datasources` 连接 `aegis_demo`，读取 18 张表及字段 Comment；数据关系采集成功 |
+| 真实 TiDB ChatBI | 通过 | 生成 `aegis_demo.orders` 查询，返回 30 行聚合结果、`tidb-direct` 引擎证据和 ECharts 规格 |
+| TiDB DDL/运维脚本 | 已提供 | `scripts/tidb-production-setup.sql`、`scripts/verify-tidb-platform.py`；TiFlash/BR/TiCDC 生产动作需目标集群单独演练 |
 | 最近问数复用 | 通过 | 点击历史问题进入问数页并自动带入问题 |
 | 事件操作闭环 | 通过 | 状态筛选、详情、领取反馈、启动作战室均可点击 |
 | 资产操作闭环 | 通过 | 详情、结构关系入口、治理任务反馈均可点击 |

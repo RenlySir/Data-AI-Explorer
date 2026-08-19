@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, SecretStr
 
+from app.tidb import configure_session
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -145,7 +147,7 @@ def connect_database(item: DataSourceRecord):
         import pymysql
     except ImportError as exc:
         raise RuntimeError("PyMySQL is not installed") from exc
-    return pymysql.connect(
+    connection = pymysql.connect(
         host=item.host,
         port=item.port,
         user=item.username,
@@ -158,6 +160,9 @@ def connect_database(item: DataSourceRecord):
         write_timeout=5,
         cursorclass=pymysql.cursors.DictCursor,
     )
+    with connection.cursor() as cursor:
+        configure_session(cursor, tidb=item.kind == "tidb")
+    return connection
 
 
 def inspect_database(item: DataSourceRecord) -> tuple[list[dict[str, Any]], int]:

@@ -138,6 +138,7 @@ from app.agent_registry import (
     test_agent,
 )
 from app.platform_store import load_settings, record_audit, save_settings, ensure_schema as ensure_platform_schema
+from app.tidb import configure_session, platform_connection_settings
 
 
 def now_iso() -> str:
@@ -798,6 +799,7 @@ def direct_tidb_optimizer_plan(sql: str) -> tuple[str, list[dict[str, Any]]]:
         raise HTTPException(502, f"direct TiDB connection failed: {exc.__class__.__name__}") from exc
     try:
         with connection.cursor() as cursor:
+            configure_session(cursor, tidb=True)
             cursor.execute("SELECT VERSION() AS version")
             version_row = cursor.fetchone() or {}
             actual_version = str(version_row.get("version", ""))
@@ -955,13 +957,14 @@ def datasource_or_404(datasource_id: str) -> DataSourceRecord:
 
 
 @app.get("/health", tags=["system"])
-def health() -> dict[str, str]:
+def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "service": "data-ai-explorer",
         "node_role": os.getenv("AEGIS_NODE_ROLE", "local"),
         "deployment_version": os.getenv("AEGIS_DEPLOYMENT_VERSION", "dev"),
         "time": now_iso(),
+        "database": "tidb",
     }
 
 
@@ -1002,6 +1005,7 @@ def deployment_status() -> dict[str, Any]:
         "observability": {
             "node_exporter": os.getenv("AEGIS_NODE_EXPORTER_URL", "http://127.0.0.1:9100/metrics"),
             "external_adapter_mode": os.getenv("AEGIS_EXTERNAL_ADAPTER_MODE", "demo"),
+            "tidb": platform_connection_settings(),
         },
         "checked_at": now_iso(),
     }

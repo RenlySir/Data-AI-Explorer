@@ -53,7 +53,7 @@ The active connection is used by Text2SQL and chart selection before environment
 - `POST /api/v1/agents/{id}/invoke`: run a model-only advisory test. It receives the tool allowlist but never executes a tool.
 - `DELETE /api/v1/agents/{id}`: remove an Agent so its template can be created again.
 
-Agent instances store a model connection reference, never its API Key. Removing the bound model marks its Agents unavailable. AIOps, SQL optimization, command, and approval templates retain human-approval policy; provisioning an Agent never grants production executor access. The local registry is in memory and must be moved to PostgreSQL with tenant/workspace isolation before production.
+Agent instances store a model connection reference, never its API Key. Removing the bound model marks its Agents unavailable. AIOps, SQL optimization, command, and approval templates retain human-approval policy; provisioning an Agent never grants production executor access. The local registry is in memory and must be moved to tenant/workspace-isolated TiDB tables before production.
 
 ## Demo flow
 
@@ -96,7 +96,7 @@ Direct database hosts must match `CHATBI_ALLOWED_DB_HOSTS`, or resolve only to p
 - `GET /api/v1/data-relationships/{datasource_id}/sql-collector`: read the server-side collector switch, interval, latest collection time and latest error.
 - `PUT /api/v1/data-relationships/{datasource_id}/sql-collector`: start or stop the in-process collector. It keeps running after the browser page closes while the API process remains alive.
 
-The local MVP stores graph snapshots, collector configuration and checkpoints in process memory. Production must use PostgreSQL and a singleton scheduled Connector Worker, isolate data by tenant/workspace, and grant the collector account read-only metadata plus the minimum TiDB statement-summary privilege.
+The local MVP stores graph snapshots, collector configuration and checkpoints in process memory. Production must use tenant/workspace-isolated TiDB tables and a singleton scheduled Connector Worker, and grant the collector account read-only metadata plus the minimum TiDB statement-summary privilege.
 
 ## TiDB SQL Optimizer APIs
 

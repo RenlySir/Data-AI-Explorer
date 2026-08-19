@@ -10,7 +10,7 @@
 | 前端体验 | 可收起侧栏、64px 顶栏、环境标识、登录错误态；ChatBI 三栏结果区；统一 OperationProgress；SSE 断线有限重连 | Vite 构建通过；远端控制节点页面返回最新静态包 |
 | 后端稳定性 | 请求 ID、安全响应头、Prometheus 文本指标、ChatBI SSE 阶段事件；只读 SQL 防护与数据源访问控制 | 52 个后端测试；远端 `/health`、`/metrics`、ChatBI/SSE 实测 |
 | 部署运维 | Compose、本地开发脚本、前后端 Dockerfile、Nginx SPA 配置、Helm chart、三节点 systemd 部署脚本 | Compose 配置校验、脚本语法检查、三节点健康验证 |
-| 数据与演示 | TiDB 元数据和审计表、演示业务数据、MCP/直连降级路径、CSV/Parquet/DuckDB | 三台 TiDB 均返回 ready，版本为 `v9.1.0` |
+| 数据与演示 | TiDB 元数据和审计表、演示业务数据、MCP/直连降级路径、CSV/Parquet/DuckDB；默认 Compose 已切换 TiDB | 三台 TiDB 均返回 ready，版本为 `v9.1.0`；真实 `aegis_demo` 数据源、关系采集和 ChatBI 通过 |
 
 ## 当前运行形态
 
