@@ -57,6 +57,35 @@ cp .env.example .env
 
 `aegis backup` 备份 PostgreSQL、配置清单、MinIO 元数据和模型 Provider 配置引用，不导出明文 Secret。默认写入指定目录，生成 manifest、校验和恢复说明；本地模型权重单独备份。
 
+## 4.4 三节点 TiDB 演示部署（已提供脚本）
+
+当目标环境没有 Docker/Kubernetes，但已有三台 CentOS 主机和 TiDB 集群时，使用仓库内的 systemd 方案：
+
+| 节点 | 角色 | 服务 | 端口 |
+|---|---|---|---|
+| `10.2.106.5` | Control | Aegis API、静态 Web、演示入口 | `18082`、`18081` |
+| `10.2.106.124` | Worker-AI | Aegis API 副本、知识库/问数/模型适配 Worker | `18082` |
+| `10.2.106.182` | Worker-Ops | Aegis API 副本、AIOps/SQL 优化/关系治理 Worker | `18082` |
+
+三台服务器共用现有 TiDB v9.1 集群 SQL 端口 `4100`；部署脚本不停止、不覆盖 `/opt/tidb-v91` 和已有 TiDB 数据目录。远端仅新增 `/opt/aegis-ai`、`/etc/aegis-ai`、`/var/log/aegis-ai`，并使用系统 Python 3.9 venv。平台设置与审计元数据使用同一集群的独立数据库 `aegis_platform`（表 `platform_settings`、`audit_events`），API 启动时幂等建表，也可执行 `scripts/migrate_platform_tidb.py`。MCP SDK 在 Python 3.9 上按可选依赖处理，live SQL 优化通过 allowlist 后的 TiDB 直连执行真实 `EXPLAIN FORMAT='verbose'`。
+
+执行前确认 SSH 公钥已配置，然后在仓库根目录运行：
+
+```bash
+./scripts/deploy-three-node.sh
+./scripts/verify-three-node.sh
+```
+
+首次演示数据只写入 TiDB 的 `aegis_demo` 库，可重复执行：
+
+```bash
+python3 -m venv .venv-demo
+.venv-demo/bin/pip install pymysql
+TIDB_HOST=10.2.106.5 TIDB_PORT=4100 .venv-demo/bin/python scripts/seed_tidb_demo.py
+```
+
+验证地址：`http://10.2.106.5:18081`；API 文档：`http://10.2.106.5:18082/docs`。每个节点的 `/health` 和 `/api/v1/deployment/status` 会返回节点角色、版本、三台 TiDB 状态和已装配的八个模块。脚本会在本地构建 Vite 前端并复制到控制节点，应用主机不需要 Node.js。生产环境应改用 SSH key、内部 PyPI/制品库、TLS、精确 CORS 和 Vault/OpenBao 凭证，不直接使用 root 密码。
+
 ## 5. Kubernetes 生产部署
 
 ### 5.1 前置依赖
@@ -254,3 +283,31 @@ P0：控制面不可用、数据泄露、Executor 未授权执行；立即电话
 - 每个生产启用功能都有 Owner、SLO、健康检查、降级和回滚 Runbook。
 - 每个场景运行至少验证一次重复消息、Worker 重启、审批超时、执行状态不明。
 - 离线部署关闭公网 egress 后，功能目录、知识库本地检索、SQL 模拟和场景演示仍可运行。
+## 4.1 三节点 TiDB 演示部署（已提供脚本）
+
+当目标环境没有 Docker/ Kubernetes，但已有三台 CentOS 主机和 TiDB 集群时，使用仓库内的 systemd 方案：
+
+| 节点 | 角色 | 服务 | 端口 |
+|---|---|---|---|
+| `10.2.106.5` | Control | Aegis API、静态 Web、演示入口 | `18082`、`18081` |
+| `10.2.106.124` | Worker-AI | Aegis API 副本、知识库/问数/模型适配 Worker | `18082` |
+| `10.2.106.182` | Worker-Ops | Aegis API 副本、AIOps/SQL 优化/关系治理 Worker | `18082` |
+
+三台服务器共用现有 TiDB v9.1 集群 SQL 端口 `4100`；部署脚本不停止、不覆盖 `/opt/tidb-v91` 和已有 TiDB 数据目录。远端仅新增 `/opt/aegis-ai`、`/etc/aegis-ai`、`/var/log/aegis-ai`，并使用系统 Python 3.9 venv。
+
+执行前确认 SSH 公钥已配置，然后在仓库根目录运行：
+
+```bash
+./scripts/deploy-three-node.sh
+./scripts/verify-three-node.sh
+```
+
+首次演示数据只写入 TiDB 的 `aegis_demo` 库，可重复执行：
+
+```bash
+python3 -m venv .venv-demo
+.venv-demo/bin/pip install pymysql
+TIDB_HOST=10.2.106.5 TIDB_PORT=4100 .venv-demo/bin/python scripts/seed_tidb_demo.py
+```
+
+验证地址：`http://10.2.106.5:18081`；API 文档：`http://10.2.106.5:18082/docs`。每个节点的 `/health` 和 `/api/v1/deployment/status` 会返回节点角色、版本、三台 TiDB 状态和已装配的八个模块。生产环境应改用 SSH key、内部 PyPI/制品库、TLS、精确 CORS 和 Vault/OpenBao 凭证，不直接使用 root 密码。

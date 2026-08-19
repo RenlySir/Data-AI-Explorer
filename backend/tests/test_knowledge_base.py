@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from unittest.mock import MagicMock, patch
 from pathlib import Path
 from uuid import uuid4
 
@@ -153,6 +154,244 @@ class KnowledgeBaseApiTest(unittest.TestCase):
         self.assertEqual(invalid.status_code, 422)
         missing = self.client.get("/api/v1/knowledge-bases/kb-missing/documents")
         self.assertEqual(missing.status_code, 404)
+
+    def test_hybrid_retrieval_supports_tag_filter_and_retrieval_only_mode(self) -> None:
+        knowledge_base = self.create_base()
+        first = self.client.post(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/documents",
+            json={
+                "title": "TiDB 慢 SQL Runbook",
+                "content": "发现慢 SQL 后先执行 EXPLAIN ANALYZE，检查统计信息和索引选择，再评估 TiDB 版本特性。",
+                "tags": ["TiDB", "SQL"],
+            },
+        )
+        self.assertEqual(first.status_code, 201, first.text)
+        second = self.client.post(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/documents",
+            json={
+                "title": "发布回滚规范",
+                "content": "高风险发布需要双人审批，异常时按预案回滚并保留验证证据。",
+                "tags": ["变更"],
+            },
+        )
+        self.assertEqual(second.status_code, 201, second.text)
+        result = self.client.post(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/query",
+            json={
+                "question": "TiDB 慢 SQL 应该如何分析？",
+                "top_k": 3,
+                "tags": ["SQL"],
+                "generate_answer": False,
+            },
+        )
+        self.assertEqual(result.status_code, 200, result.text)
+        payload = result.json()
+        self.assertEqual(payload["generation_mode"], "retrieval-only")
+        self.assertGreaterEqual(payload["candidate_count"], len(payload["citations"]))
+        self.assertLessEqual(len(payload["citations"]), 3)
+        self.assertTrue(payload["citations"])
+        self.assertTrue(payload["citations"][0]["matched_terms"])
+        self.assertIn("SQL", payload["citations"][0]["tags"])
+        self.assertIn("+", payload["retrieval_mode"])
+        self.assertGreaterEqual(payload["retrieval_latency_ms"], 1)
+
+    def test_knowledge_base_exposes_splitter_provider(self) -> None:
+        knowledge_base = self.create_base()
+        self.assertIn(
+            knowledge_base["splitter_provider"],
+            {"langchain-recursive", "builtin-recursive"},
+        )
+
+    def test_index_modes_are_listed_and_settings_rebuild_chunks(self) -> None:
+        modes = self.client.get("/api/v1/knowledge-bases/index-modes")
+        self.assertEqual(modes.status_code, 200, modes.text)
+        self.assertEqual(
+            {item["id"] for item in modes.json()},
+            {"lexical", "semantic", "hybrid"},
+        )
+        self.assertEqual(sum(item["recommended"] for item in modes.json()), 1)
+
+        knowledge_base = self.create_base()
+        document = self.client.post(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/documents",
+            json={
+                "title": "需要重新分块的长文档",
+                "content": ("TiDB 慢 SQL 需要检查执行计划、统计信息和索引选择。" * 80),
+            },
+        )
+        self.assertEqual(document.status_code, 201, document.text)
+        old_count = document.json()["chunk_count"]
+
+        updated = self.client.patch(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}",
+            json={
+                "chunk_size": 600,
+                "chunk_overlap": 80,
+                "retrieval_strategy": "semantic",
+            },
+        )
+        self.assertEqual(updated.status_code, 200, updated.text)
+        payload = updated.json()
+        self.assertEqual(payload["chunk_size"], 600)
+        self.assertEqual(payload["chunk_overlap"], 80)
+        self.assertEqual(payload["retrieval_strategy"], "semantic")
+        self.assertEqual(payload["embedding_provider"], "local-character")
+        self.assertNotEqual(payload["chunk_count"], old_count)
+
+        documents = self.client.get(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/documents"
+        ).json()
+        self.assertEqual(documents[0]["id"], document.json()["id"])
+        self.assertEqual(documents[0]["chunk_count"], payload["chunk_count"])
+        chunks = self.client.get(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/documents/{document.json()['id']}/chunks"
+        ).json()
+        self.assertEqual(len(chunks), payload["chunk_count"])
+
+        result = self.client.post(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/query",
+            json={"question": "TiDB 慢 SQL 怎么检查？", "generate_answer": False},
+        )
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertTrue(result.json()["retrieval_mode"].startswith("semantic+"))
+
+    def test_settings_reject_unknown_mode_and_invalid_overlap(self) -> None:
+        knowledge_base = self.create_base()
+        unknown = self.client.patch(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}",
+            json={"retrieval_strategy": "vector-magic"},
+        )
+        self.assertEqual(unknown.status_code, 422)
+        invalid = self.client.patch(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}",
+            json={"chunk_size": 300, "chunk_overlap": 300},
+        )
+        self.assertEqual(invalid.status_code, 422)
+
+    def test_chunking_modes_and_markdown_sections_are_supported(self) -> None:
+        modes = self.client.get("/api/v1/knowledge-bases/chunking-modes")
+        self.assertEqual(modes.status_code, 200, modes.text)
+        self.assertEqual({item["id"] for item in modes.json()}, {"recursive", "markdown"})
+
+        knowledge_base = self.client.post(
+            "/api/v1/knowledge-bases",
+            json={
+                "name": f"Markdown 知识库-{uuid4().hex[:8]}",
+                "chunk_size": 240,
+                "chunk_overlap": 20,
+                "chunking_strategy": "markdown",
+            },
+        )
+        self.assertEqual(knowledge_base.status_code, 201, knowledge_base.text)
+        self.assertEqual(knowledge_base.json()["chunking_strategy"], "markdown")
+        self.assertIn(knowledge_base.json()["splitter_provider"], {"langchain-markdown", "builtin-markdown"})
+        document = self.client.post(
+            f"/api/v1/knowledge-bases/{knowledge_base.json()['id']}/documents",
+            json={
+                "title": "Markdown 手册",
+                "content": "# 发布准备\n检查审批和回滚预案。\n\n# 发布验证\n检查错误率和延迟。",
+            },
+        )
+        self.assertEqual(document.status_code, 201, document.text)
+        self.assertGreaterEqual(document.json()["chunk_count"], 2)
+
+    def test_document_governance_and_score_threshold(self) -> None:
+        knowledge_base = self.create_base()
+        document = self.client.post(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/documents",
+            json={
+                "title": "TiDB 变更手册",
+                "content": "TiDB 生产变更必须完成双人审批，并准备可验证的回滚方案。",
+                "tags": ["TiDB", "变更"],
+            },
+        )
+        self.assertEqual(document.status_code, 201, document.text)
+        document_id = document.json()["id"]
+        self.assertTrue(document.json()["enabled"])
+        self.assertIsNotNone(document.json()["indexed_at"])
+
+        disabled = self.client.patch(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/documents/{document_id}",
+            json={"enabled": False},
+        )
+        self.assertEqual(disabled.status_code, 200, disabled.text)
+        self.assertFalse(disabled.json()["enabled"])
+        disabled_query = self.client.post(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/query",
+            json={"question": "TiDB 变更如何审批？", "score_threshold": 0},
+        )
+        self.assertEqual(disabled_query.status_code, 200, disabled_query.text)
+        self.assertEqual(disabled_query.json()["citations"], [])
+
+        enabled = self.client.patch(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/documents/{document_id}",
+            json={"enabled": True},
+        )
+        self.assertEqual(enabled.status_code, 200, enabled.text)
+        strict_query = self.client.post(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/query",
+            json={"question": "TiDB 变更如何审批？", "score_threshold": 1},
+        )
+        self.assertEqual(strict_query.status_code, 200, strict_query.text)
+        self.assertEqual(strict_query.json()["score_threshold"], 1)
+        self.assertEqual(strict_query.json()["citations"], [])
+
+        reindexed = self.client.post(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/documents/{document_id}/reindex"
+        )
+        self.assertEqual(reindexed.status_code, 200, reindexed.text)
+        self.assertEqual(reindexed.json()["status"], "ready")
+        deleted = self.client.delete(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/documents/{document_id}"
+        )
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertTrue(deleted.json()["deleted"])
+        current = self.client.get(f"/api/v1/knowledge-bases/{knowledge_base['id']}")
+        self.assertEqual(current.json()["document_count"], 0)
+        self.assertEqual(current.json()["chunk_count"], 0)
+
+    def test_model_answer_requires_valid_citation_and_degrades_when_invalid(self) -> None:
+        knowledge_base = self.create_base()
+        document = self.client.post(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/documents",
+            json={
+                "title": "变更门禁",
+                "content": "高风险变更需要双人审批，并在发布后观察核心指标。",
+                "tags": ["变更"],
+            },
+        )
+        self.assertEqual(document.status_code, 201, document.text)
+
+        client = MagicMock()
+        session = client.__enter__.return_value
+        session.post.return_value.raise_for_status.return_value = None
+        session.post.return_value.json.return_value = {
+            "choices": [{"message": {"content": "高风险变更需要双人审批。[1]"}}]
+        }
+        with patch("app.knowledge_base.active_model_config", return_value=("http://model.local/v1", "chat", "secret")), patch(
+            "app.knowledge_base.httpx.Client", return_value=client
+        ):
+            grounded = self.client.post(
+                f"/api/v1/knowledge-bases/{knowledge_base['id']}/query",
+                json={"question": "高风险变更需要什么审批？"},
+            )
+        self.assertEqual(grounded.status_code, 200, grounded.text)
+        self.assertEqual(grounded.json()["generation_mode"], "model")
+        self.assertIn("[1]", grounded.json()["answer"])
+
+        session.post.return_value.json.return_value = {
+            "choices": [{"message": {"content": "这是没有合法引用的回答。"}}]
+        }
+        with patch("app.knowledge_base.active_model_config", return_value=("http://model.local/v1", "chat", "secret")), patch(
+            "app.knowledge_base.httpx.Client", return_value=client
+        ):
+            degraded = self.client.post(
+                f"/api/v1/knowledge-bases/{knowledge_base['id']}/query",
+                json={"question": "高风险变更需要什么审批？"},
+            )
+        self.assertEqual(degraded.status_code, 200, degraded.text)
+        self.assertEqual(degraded.json()["generation_mode"], "extractive")
+        self.assertIn("仅基于列出的知识片段", degraded.json()["answer"])
 
 
 if __name__ == "__main__":

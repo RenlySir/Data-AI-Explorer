@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -15,8 +16,9 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.product_catalog import (
@@ -52,20 +54,30 @@ from app.knowledge_base import (
     KNOWLEDGE_BASES,
     KnowledgeBaseCreate,
     KnowledgeBaseRecord,
+    KnowledgeBaseUpdate,
+    KnowledgeChunkingMode,
     KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeDocumentCreate,
+    KnowledgeDocumentUpdate,
     KnowledgeFeedback,
     KnowledgeFeedbackCreate,
     KnowledgeQuery,
     KnowledgeQueryResult,
+    KnowledgeIndexMode,
+    KNOWLEDGE_INDEX_MODES,
+    KNOWLEDGE_CHUNKING_MODES,
     add_feedback,
     add_document,
     create_knowledge_base,
+    delete_document,
     list_document_chunks,
     list_documents,
     list_queries,
     query_knowledge_base,
+    reindex_document,
+    update_document,
+    update_knowledge_base,
 )
 from app.chatbi import (
     ChatBIQuery,
@@ -106,6 +118,26 @@ from app.model_registry import (
     set_default_connection,
     test_connection,
 )
+from app.agent_registry import (
+    AGENT_TEMPLATES,
+    MODULE_AGENTS,
+    AgentCreate,
+    AgentEnabledUpdate,
+    AgentInvokeRequest,
+    AgentInvokeResult,
+    AgentProvisionRequest,
+    AgentProvisionResult,
+    AgentTemplate,
+    AgentTestResult,
+    ModuleAgent,
+    create_agent,
+    invoke_agent,
+    mark_model_unavailable,
+    provision_agents,
+    set_agent_enabled,
+    test_agent,
+)
+from app.platform_store import load_settings, record_audit, save_settings, ensure_schema as ensure_platform_schema
 
 
 def now_iso() -> str:
@@ -155,6 +187,63 @@ class Asset(BaseModel):
     columns: list[dict[str, str]]
     upstream: list[str]
     downstream: list[str]
+    row_count: int | None = None
+    quality_score: float | None = None
+
+
+class WorkspaceSettings(BaseModel):
+    workspace_name: str = Field(default="本地演示空间", min_length=1, max_length=120)
+    language: str = Field(default="zh-CN", min_length=2, max_length=20)
+    timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=64)
+    data_retention_days: int = Field(default=90, ge=1, le=3650)
+    tidb_mcp_endpoint: str = Field(default="demo://tidb", max_length=2048)
+    allowed_data_root: str = Field(default="/workspace/data", max_length=2048)
+    readonly_sql: bool = True
+    operation_audit: bool = True
+    high_risk_approval: bool = True
+    local_models_only: bool = False
+    updated_at: str = ""
+
+
+class WorkspaceSettingsUpdate(BaseModel):
+    workspace_name: str | None = Field(default=None, min_length=1, max_length=120)
+    language: str | None = Field(default=None, min_length=2, max_length=20)
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
+    data_retention_days: int | None = Field(default=None, ge=1, le=3650)
+    tidb_mcp_endpoint: str | None = Field(default=None, max_length=2048)
+    allowed_data_root: str | None = Field(default=None, max_length=2048)
+    readonly_sql: bool | None = None
+    operation_audit: bool | None = None
+    high_risk_approval: bool | None = None
+    local_models_only: bool | None = None
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=160)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class LogoutRequest(BaseModel):
+    session_id: str | None = None
+
+
+class IncidentReadRequest(BaseModel):
+    incident_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
+class GovernanceTaskRequest(BaseModel):
+    title: str = Field(min_length=2, max_length=160)
+    asset_id: str = Field(min_length=1, max_length=160)
+    description: str = Field(default="", max_length=2000)
+
+
+class GovernanceTask(BaseModel):
+    task_id: str
+    asset_id: str
+    title: str
+    description: str
+    status: str
+    created_at: str
 
 
 class TidbMcpIntrospectRequest(BaseModel):
@@ -221,9 +310,9 @@ INCIDENTS = [
 ]
 
 ASSETS = [
-    Asset(id="asset-orders", name="dwd_orders", type="table", owner="数据平台组", status="certified", database="warehouse", description="订单明细事实表，供经营分析和履约监控使用。", columns=[{"name": "order_id", "type": "bigint", "sensitivity": "internal"}, {"name": "customer_id", "type": "bigint", "sensitivity": "restricted"}, {"name": "amount", "type": "decimal", "sensitivity": "internal"}], upstream=["ods_orders"], downstream=["ads_sales_daily", "rpt_order_fulfillment"]),
-    Asset(id="asset-sales", name="ads_sales_daily", type="table", owner="经营分析组", status="certified", database="warehouse", description="按日汇总销售指标宽表。", columns=[{"name": "stat_date", "type": "date", "sensitivity": "public"}, {"name": "gmv", "type": "decimal", "sensitivity": "internal"}], upstream=["dwd_orders"], downstream=["dashboard_sales"]),
-    Asset(id="asset-order-sync", name="order_sync_lag", type="metric", owner="SRE", status="active", database="observability", description="订单同步 Kafka consumer lag 指标。", columns=[{"name": "value", "type": "gauge", "sensitivity": "internal"}], upstream=[], downstream=["inc-1001"]),
+    Asset(id="asset-orders", name="dwd_orders", type="table", owner="数据平台组", status="certified", database="warehouse", description="订单明细事实表，供经营分析和履约监控使用。", columns=[{"name": "order_id", "type": "bigint", "sensitivity": "internal"}, {"name": "customer_id", "type": "bigint", "sensitivity": "restricted"}, {"name": "amount", "type": "decimal", "sensitivity": "internal"}], upstream=["ods_orders"], downstream=["ads_sales_daily", "rpt_order_fulfillment"], row_count=128400000, quality_score=98),
+    Asset(id="asset-sales", name="ads_sales_daily", type="table", owner="经营分析组", status="certified", database="warehouse", description="按日汇总销售指标宽表。", columns=[{"name": "stat_date", "type": "date", "sensitivity": "public"}, {"name": "gmv", "type": "decimal", "sensitivity": "internal"}], upstream=["dwd_orders"], downstream=["dashboard_sales"], row_count=4800000, quality_score=94),
+    Asset(id="asset-order-sync", name="order_sync_lag", type="metric", owner="SRE", status="active", database="observability", description="订单同步 Kafka consumer lag 指标。", columns=[{"name": "value", "type": "gauge", "sensitivity": "internal"}], upstream=[], downstream=["inc-1001"], row_count=None, quality_score=91),
 ]
 
 DEMO_CATALOG = TidbCatalog(
@@ -247,11 +336,15 @@ DATASETS: dict[str, Dataset] = {}
 RELATIONSHIP_CATALOGS: dict[str, TidbCatalog] = {}
 SQL_COLLECTOR_STATUS: dict[str, SqlCollectorStatus] = {}
 SQL_COLLECTOR_STOPS: dict[str, threading.Event] = {}
+GOVERNANCE_TASKS: dict[str, GovernanceTask] = {}
 DATASET_DIR = Path(os.getenv("DATASET_STORAGE_DIR", tempfile.gettempdir() + "/aegis-datasets"))
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 
 KNOWLEDGE_ALLOWED_SUFFIXES = {".txt", ".md", ".markdown", ".html", ".htm", ".json", ".sql", ".ddl"}
 KNOWLEDGE_MAX_FILE_BYTES = 4 * 1024 * 1024
+
+DEFAULT_WORKSPACE_SETTINGS = WorkspaceSettings(updated_at=now_iso())
+WORKSPACE_SETTINGS = DEFAULT_WORKSPACE_SETTINGS
 
 app = FastAPI(title="Data AI Explorer API", version="0.2.0", description="企业 AI 落地平台的智能问数和数据目录 API")
 CORS_ALLOW_ORIGINS = [
@@ -268,6 +361,51 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+REQUEST_METRICS = {"requests": 0, "errors": 0}
+
+
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or f"req-{uuid4().hex[:16]}"
+    REQUEST_METRICS["requests"] += 1
+    response = await call_next(request)
+    if response.status_code >= 500:
+        REQUEST_METRICS["errors"] += 1
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+
+@app.get("/metrics", include_in_schema=False, response_class=PlainTextResponse)
+def metrics() -> str:
+    return "\n".join(
+        (
+            "# HELP aegis_http_requests_total Total HTTP requests handled by the API.",
+            "# TYPE aegis_http_requests_total counter",
+            f"aegis_http_requests_total {REQUEST_METRICS['requests']}",
+            "# HELP aegis_http_errors_total Total HTTP 5xx responses emitted by the API.",
+            "# TYPE aegis_http_errors_total counter",
+            f"aegis_http_errors_total {REQUEST_METRICS['errors']}",
+            f"aegis_active_operations {len(OPERATIONS)}",
+        )
+    ) + "\n"
+
+
+@app.on_event("startup")
+def initialize_platform_store() -> None:
+    global WORKSPACE_SETTINGS
+    try:
+        ensure_platform_schema()
+        stored = load_settings()
+        if stored:
+            WORKSPACE_SETTINGS = WorkspaceSettings.model_validate(stored)
+    except Exception:
+        # The application remains usable in demo mode if the optional TiDB
+        # metadata schema is temporarily unavailable.
+        WORKSPACE_SETTINGS = DEFAULT_WORKSPACE_SETTINGS
 
 
 def chart_spec(columns: list[str], rows: list[list[Any]], title: str) -> dict[str, Any]:
@@ -300,9 +438,8 @@ async def chatbi_chart_spec(question: str, columns: list[str], rows: list[list[A
         chart_type = "pie"
 
     endpoint, model, api_key = active_model_config()
-    if endpoint and model:
+    if endpoint:
         payload = {
-            "model": model,
             "temperature": 0,
             "messages": [
                 {
@@ -315,6 +452,8 @@ async def chatbi_chart_spec(question: str, columns: list[str], rows: list[list[A
                 },
             ],
         }
+        if model:
+            payload["model"] = model
         headers = {}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -411,9 +550,11 @@ def catalog_context(catalog: TidbCatalog) -> str:
 
 async def model_sql(question: str, catalog: TidbCatalog) -> str:
     endpoint, model, api_key = active_model_config()
-    if not endpoint or not model:
+    if not endpoint:
         return heuristic_sql(question, catalog)
-    payload = {"model": model, "temperature": 0, "messages": [{"role": "system", "content": "You generate one read-only TiDB SELECT statement. Return SQL only."}, {"role": "user", "content": f"Schema:\n{catalog_context(catalog)}\nQuestion: {question}"}]}
+    payload = {"temperature": 0, "messages": [{"role": "system", "content": "You generate one read-only TiDB SELECT statement. Return SQL only."}, {"role": "user", "content": f"Schema:\n{catalog_context(catalog)}\nQuestion: {question}"}]}
+    if model:
+        payload["model"] = model
     headers = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -622,6 +763,53 @@ def active_mcp_config(explicit_endpoint: str | None = None) -> tuple[str, str | 
     return endpoint, token, tool_map
 
 
+def direct_tidb_optimizer_plan(sql: str) -> tuple[str, list[dict[str, Any]]]:
+    """Run a read-only EXPLAIN against the deployment's TiDB endpoint.
+
+    MCP remains the preferred integration when configured.  The direct path is
+    intentionally environment-only (no arbitrary host from the request) so a
+    Python 3.9 deployment can still demonstrate live optimizer behavior when
+    the MCP SDK is unavailable.
+    """
+    host = os.getenv("AEGIS_TIDB_OPTIMIZER_HOST", "").strip()
+    if not host:
+        raise HTTPException(400, "live optimization requires TiDB MCP or AEGIS_TIDB_OPTIMIZER_HOST")
+    allowed_hosts = {item.strip().lower() for item in os.getenv("CHATBI_ALLOWED_DB_HOSTS", "").split(",") if item.strip()}
+    if allowed_hosts and host.lower() not in allowed_hosts:
+        raise HTTPException(403, "direct TiDB optimizer host is not allowlisted")
+    try:
+        import pymysql
+    except ImportError as exc:
+        raise HTTPException(503, "PyMySQL is not installed") from exc
+    try:
+        connection = pymysql.connect(
+            host=host,
+            port=int(os.getenv("AEGIS_TIDB_OPTIMIZER_PORT", os.getenv("AEGIS_TIDB_SQL_PORT", "4000"))),
+            user=os.getenv("AEGIS_TIDB_OPTIMIZER_USER", "root"),
+            password=os.getenv("AEGIS_TIDB_OPTIMIZER_PASSWORD", ""),
+            database=os.getenv("AEGIS_TIDB_OPTIMIZER_DATABASE", ""),
+            charset="utf8mb4",
+            autocommit=True,
+            connect_timeout=5,
+            read_timeout=20,
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"direct TiDB connection failed: {exc.__class__.__name__}") from exc
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT VERSION() AS version")
+            version_row = cursor.fetchone() or {}
+            actual_version = str(version_row.get("version", ""))
+            cursor.execute(f"EXPLAIN FORMAT='verbose' {sql.strip().rstrip(';')}")
+            plan_rows = list(cursor.fetchall())
+    except Exception as exc:
+        raise HTTPException(502, f"direct TiDB EXPLAIN failed: {exc.__class__.__name__}") from exc
+    finally:
+        connection.close()
+    return actual_version, plan_rows
+
+
 def register_dataset(path: Path, display_name: str | None = None) -> Dataset:
     suffix = path.suffix.lower()
     if suffix not in (".csv", ".parquet"):
@@ -768,7 +956,110 @@ def datasource_or_404(datasource_id: str) -> DataSourceRecord:
 
 @app.get("/health", tags=["system"])
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "data-ai-explorer", "time": now_iso()}
+    return {
+        "status": "ok",
+        "service": "data-ai-explorer",
+        "node_role": os.getenv("AEGIS_NODE_ROLE", "local"),
+        "deployment_version": os.getenv("AEGIS_DEPLOYMENT_VERSION", "dev"),
+        "time": now_iso(),
+    }
+
+
+@app.get("/api/v1/deployment/status", tags=["system"])
+def deployment_status() -> dict[str, Any]:
+    """Expose a safe, live deployment view for the three-node demo environment."""
+    raw_hosts = os.getenv("AEGIS_TIDB_ENDPOINTS", "10.2.106.5,10.2.106.124,10.2.106.182")
+    hosts = [item.strip() for item in raw_hosts.split(",") if item.strip()]
+    status_port = int(os.getenv("AEGIS_TIDB_STATUS_PORT", "11080"))
+    sql_port = int(os.getenv("AEGIS_TIDB_SQL_PORT", "4100"))
+    tidb_nodes: list[dict[str, Any]] = []
+    with httpx.Client(timeout=1.5, follow_redirects=False) as client:
+        for host in hosts:
+            item: dict[str, Any] = {"host": host, "sql_port": sql_port, "status_port": status_port}
+            try:
+                response = client.get(f"http://{host}:{status_port}/status")
+                response.raise_for_status()
+                payload = response.json()
+                item.update({"status": "ready", "version": payload.get("version", "unknown")})
+            except Exception as exc:
+                item.update({"status": "unreachable", "error": exc.__class__.__name__})
+            tidb_nodes.append(item)
+    return {
+        "service": "data-ai-explorer",
+        "deployment_version": os.getenv("AEGIS_DEPLOYMENT_VERSION", "dev"),
+        "node_role": os.getenv("AEGIS_NODE_ROLE", "local"),
+        "modules": [
+            "smart-query",
+            "chatbi",
+            "data-relationships",
+            "knowledge-base",
+            "aiops",
+            "sql-optimizer",
+            "scenario-center",
+            "agent-center",
+        ],
+        "tidb_nodes": tidb_nodes,
+        "observability": {
+            "node_exporter": os.getenv("AEGIS_NODE_EXPORTER_URL", "http://127.0.0.1:9100/metrics"),
+            "external_adapter_mode": os.getenv("AEGIS_EXTERNAL_ADAPTER_MODE", "demo"),
+        },
+        "checked_at": now_iso(),
+    }
+
+
+@app.post("/api/v1/auth/login", tags=["auth"])
+def login(payload: LoginRequest) -> dict[str, Any]:
+    if "@" not in payload.email or not payload.password.strip():
+        raise HTTPException(401, "invalid demo credentials")
+    session_id = f"sess-{uuid4().hex[:16]}"
+    try:
+        record_audit(session_id, payload.email, "login", "session", session_id, {"mode": "demo"})
+    except Exception:
+        pass
+    return {
+        "session_id": session_id,
+        "token_type": "demo",
+        "user": {"email": payload.email, "display_name": payload.email.split("@", 1)[0]},
+        "expires_in": 8 * 60 * 60,
+    }
+
+
+@app.post("/api/v1/auth/logout", tags=["auth"])
+def logout(payload: LogoutRequest) -> dict[str, Any]:
+    event_id = payload.session_id or f"sess-{uuid4().hex[:16]}"
+    try:
+        record_audit(event_id, "workspace-user", "logout", "session", payload.session_id, {})
+    except Exception:
+        pass
+    return {"status": "ok", "logged_out_at": now_iso()}
+
+
+@app.get("/api/v1/settings", response_model=WorkspaceSettings, tags=["settings"])
+def get_settings() -> WorkspaceSettings:
+    return WORKSPACE_SETTINGS
+
+
+@app.patch("/api/v1/settings", response_model=WorkspaceSettings, tags=["settings"])
+def patch_settings(payload: WorkspaceSettingsUpdate) -> WorkspaceSettings:
+    global WORKSPACE_SETTINGS
+    values = WORKSPACE_SETTINGS.model_dump()
+    values.update({key: value for key, value in payload.model_dump().items() if value is not None})
+    values["updated_at"] = now_iso()
+    updated = WorkspaceSettings.model_validate(values)
+    try:
+        save_settings(updated.model_dump())
+        record_audit(
+            f"audit-{uuid4().hex[:16]}",
+            "workspace-admin",
+            "settings.update",
+            "workspace_settings",
+            "default",
+            payload.model_dump(exclude_none=True),
+        )
+    except Exception as exc:
+        raise HTTPException(503, f"platform metadata store unavailable: {exc.__class__.__name__}") from exc
+    WORKSPACE_SETTINGS = updated
+    return updated
 
 
 @app.get("/api/v1/models/providers", response_model=list[ModelProvider], tags=["models"])
@@ -828,6 +1119,71 @@ def model_delete_connection(connection_id: str) -> None:
         raise HTTPException(404, "model connection not found")
     MODEL_CONNECTIONS.pop(connection_id, None)
     MODEL_SECRETS.pop(connection_id, None)
+    mark_model_unavailable(connection_id)
+
+
+@app.get("/api/v1/agents/templates", response_model=list[AgentTemplate], tags=["agents"])
+def agent_templates() -> list[AgentTemplate]:
+    return AGENT_TEMPLATES
+
+
+@app.get("/api/v1/agents", response_model=list[ModuleAgent], tags=["agents"])
+def agent_list() -> list[ModuleAgent]:
+    return list(reversed(list(MODULE_AGENTS.values())))
+
+
+@app.post("/api/v1/agents", response_model=ModuleAgent, status_code=201, tags=["agents"])
+def agent_create(payload: AgentCreate) -> ModuleAgent:
+    try:
+        item, _ = create_agent(payload)
+        return item
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/v1/agents/provision", response_model=AgentProvisionResult, tags=["agents"])
+def agent_provision(payload: AgentProvisionRequest) -> AgentProvisionResult:
+    try:
+        return provision_agents(payload)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+def agent_or_404(agent_id: str) -> ModuleAgent:
+    item = MODULE_AGENTS.get(agent_id)
+    if not item:
+        raise HTTPException(404, "agent not found")
+    return item
+
+
+@app.put("/api/v1/agents/{agent_id}/enabled", response_model=ModuleAgent, tags=["agents"])
+def agent_update_enabled(agent_id: str, payload: AgentEnabledUpdate) -> ModuleAgent:
+    return set_agent_enabled(agent_or_404(agent_id), payload.enabled)
+
+
+@app.post("/api/v1/agents/{agent_id}/test", response_model=AgentTestResult, tags=["agents"])
+def agent_test(agent_id: str) -> AgentTestResult:
+    return test_agent(agent_or_404(agent_id))
+
+
+@app.post("/api/v1/agents/{agent_id}/invoke", response_model=AgentInvokeResult, tags=["agents"])
+def agent_invoke(agent_id: str, payload: AgentInvokeRequest) -> AgentInvokeResult:
+    try:
+        return invoke_agent(agent_or_404(agent_id), payload)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.delete("/api/v1/agents/{agent_id}", status_code=204, tags=["agents"])
+def agent_delete(agent_id: str) -> None:
+    agent_or_404(agent_id)
+    MODULE_AGENTS.pop(agent_id, None)
 
 
 @app.get("/api/v1/workbench/summary", tags=["workbench"])
@@ -1177,6 +1533,36 @@ def query_status(operation_id: str) -> QueryOperation:
     return operation
 
 
+@app.get("/api/v1/query/operations/{operation_id}/events", tags=["query"])
+async def query_operation_events(operation_id: str) -> StreamingResponse:
+    """Stream a resumable-friendly execution timeline for a completed operation.
+
+    The MVP query executor completes in one request, but clients still need a
+    stable event contract before the executor is moved to a worker queue.  The
+    event names and payload shape stay the same when that migration happens.
+    """
+    operation = OPERATIONS.get(operation_id)
+    if not operation:
+        raise HTTPException(404, "query operation not found")
+
+    async def events():
+        phases = (
+            ("PLANNING", "解析自然语言问题", 20),
+            ("VALIDATING", "校验只读 SQL 和数据源权限", 45),
+            ("EXECUTING", "在目标数据源执行查询", 80),
+        )
+        for phase, detail, progress in phases:
+            yield f"event: progress\ndata: {json.dumps({'phase': phase, 'detail': detail, 'progress': progress}, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0.05)
+        yield f"event: completed\ndata: {json.dumps({'phase': 'COMPLETED', 'progress': 100, 'operation': operation.model_dump()}, ensure_ascii=False, default=str)}\n\n"
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.post("/api/v1/datasets/upload", response_model=Dataset, status_code=201, tags=["datasets"])
 async def upload_dataset(file: UploadFile = File(...)) -> Dataset:
     suffix = Path(file.filename or "").suffix.lower()
@@ -1231,12 +1617,35 @@ def post_knowledge_base(payload: KnowledgeBaseCreate) -> KnowledgeBaseRecord:
         raise HTTPException(422, str(exc)) from exc
 
 
+@app.get("/api/v1/knowledge-bases/index-modes", response_model=list[KnowledgeIndexMode], tags=["knowledge"])
+def get_knowledge_index_modes() -> list[KnowledgeIndexMode]:
+    return KNOWLEDGE_INDEX_MODES
+
+
+@app.get("/api/v1/knowledge-bases/chunking-modes", response_model=list[KnowledgeChunkingMode], tags=["knowledge"])
+def get_knowledge_chunking_modes() -> list[KnowledgeChunkingMode]:
+    return KNOWLEDGE_CHUNKING_MODES
+
+
 @app.get("/api/v1/knowledge-bases/{knowledge_base_id}", response_model=KnowledgeBaseRecord, tags=["knowledge"])
 def get_knowledge_base(knowledge_base_id: str) -> KnowledgeBaseRecord:
     knowledge_base = KNOWLEDGE_BASES.get(knowledge_base_id)
     if not knowledge_base:
         raise HTTPException(404, "knowledge base not found")
     return knowledge_base
+
+
+@app.patch("/api/v1/knowledge-bases/{knowledge_base_id}", response_model=KnowledgeBaseRecord, tags=["knowledge"])
+def patch_knowledge_base(
+    knowledge_base_id: str,
+    payload: KnowledgeBaseUpdate,
+) -> KnowledgeBaseRecord:
+    try:
+        return update_knowledge_base(knowledge_base_id, payload)
+    except KeyError as exc:
+        raise HTTPException(404, "knowledge base not found") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.get("/api/v1/knowledge-bases/{knowledge_base_id}/documents", response_model=list[KnowledgeDocument], tags=["knowledge"])
@@ -1255,6 +1664,43 @@ def get_knowledge_chunks(knowledge_base_id: str, document_id: str) -> list[Knowl
         raise HTTPException(404, "knowledge base not found") from exc
     except LookupError as exc:
         raise HTTPException(404, "knowledge document not found") from exc
+
+
+@app.patch("/api/v1/knowledge-bases/{knowledge_base_id}/documents/{document_id}", response_model=KnowledgeDocument, tags=["knowledge"])
+def patch_knowledge_document(
+    knowledge_base_id: str,
+    document_id: str,
+    payload: KnowledgeDocumentUpdate,
+) -> KnowledgeDocument:
+    try:
+        return update_document(knowledge_base_id, document_id, payload)
+    except KeyError as exc:
+        raise HTTPException(404, "knowledge base not found") from exc
+    except LookupError as exc:
+        raise HTTPException(404, "knowledge document not found") from exc
+
+
+@app.post("/api/v1/knowledge-bases/{knowledge_base_id}/documents/{document_id}/reindex", response_model=KnowledgeDocument, tags=["knowledge"])
+def post_reindex_knowledge_document(knowledge_base_id: str, document_id: str) -> KnowledgeDocument:
+    try:
+        return reindex_document(knowledge_base_id, document_id)
+    except KeyError as exc:
+        raise HTTPException(404, "knowledge base not found") from exc
+    except LookupError as exc:
+        raise HTTPException(404, "knowledge document not found") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.delete("/api/v1/knowledge-bases/{knowledge_base_id}/documents/{document_id}", tags=["knowledge"])
+def delete_knowledge_document(knowledge_base_id: str, document_id: str) -> dict[str, bool]:
+    try:
+        delete_document(knowledge_base_id, document_id)
+    except KeyError as exc:
+        raise HTTPException(404, "knowledge base not found") from exc
+    except LookupError as exc:
+        raise HTTPException(404, "knowledge document not found") from exc
+    return {"deleted": True}
 
 
 @app.post("/api/v1/knowledge-bases/{knowledge_base_id}/documents", response_model=KnowledgeDocument, status_code=201, tags=["knowledge"])
@@ -1422,6 +1868,14 @@ async def optimize_tidb_sql(payload: SQLOptimizeRequest) -> SQLOptimizeResponse:
         return analyze_sql(payload)
 
     analyze_sql(payload)
+    configured_mcp = payload.mcp_endpoint or (MCP_CONNECTION.endpoint if MCP_CONNECTION else None) or os.getenv("TIDB_MCP_ENDPOINT", "").strip()
+    if not configured_mcp and os.getenv("AEGIS_TIDB_OPTIMIZER_HOST", "").strip():
+        actual_version, plan_rows = direct_tidb_optimizer_plan(payload.sql)
+        if not version_matches(payload.tidb_version, actual_version):
+            raise HTTPException(409, f"selected TiDB version does not match connected cluster: {actual_version}")
+        if not plan_rows:
+            raise HTTPException(502, "direct TiDB returned an empty EXPLAIN plan")
+        return analyze_sql(payload, live_rows=plan_rows, actual_version=actual_version)
     endpoint, token, tool_map = active_mcp_config(payload.mcp_endpoint)
     try:
         actual_version = first_scalar(await call_mcp(endpoint, token, tool_map, "query", {"sql": "SELECT VERSION() AS version"}))
@@ -1564,6 +2018,23 @@ def incident_detail(incident_id: str) -> Incident:
     raise HTTPException(404, "incident not found")
 
 
+@app.post("/api/v1/incidents/read", tags=["aiops"])
+def mark_incidents_read(payload: IncidentReadRequest) -> dict[str, Any]:
+    selected = set(payload.incident_ids)
+    candidates = INCIDENTS if not selected else [item for item in INCIDENTS if item.id in selected]
+    return {"count": len(candidates), "marked_at": now_iso()}
+
+
+@app.post("/api/v1/incidents/{incident_id}/claim", response_model=Incident, tags=["aiops"])
+def claim_incident(incident_id: str) -> Incident:
+    for incident in INCIDENTS:
+        if incident.id == incident_id:
+            if incident.status not in ("resolved", "closed"):
+                incident.status = "investigating"
+            return incident
+    raise HTTPException(404, "incident not found")
+
+
 @app.get("/api/v1/assets", response_model=list[Asset], tags=["governance"])
 def assets(search: str | None = Query(None), type: str | None = Query(None)) -> list[Asset]:
     return [a for a in ASSETS if (not search or search.lower() in (a.name + a.description).lower()) and (not type or a.type == type)]
@@ -1575,3 +2046,20 @@ def asset_detail(asset_id: str) -> Asset:
         if asset.id == asset_id:
             return asset
     raise HTTPException(404, "asset not found")
+
+
+@app.post("/api/v1/assets/{asset_id}/governance-tasks", response_model=GovernanceTask, status_code=201, tags=["governance"])
+def create_governance_task(asset_id: str, payload: GovernanceTaskRequest) -> GovernanceTask:
+    asset_detail(asset_id)
+    if payload.asset_id != asset_id:
+        raise HTTPException(400, "asset_id does not match path")
+    task = GovernanceTask(
+        task_id=f"gov-{uuid4().hex[:10]}",
+        asset_id=asset_id,
+        title=payload.title,
+        description=payload.description,
+        status="draft",
+        created_at=now_iso(),
+    )
+    GOVERNANCE_TASKS[task.task_id] = task
+    return task

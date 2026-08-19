@@ -348,6 +348,23 @@ API 契约与接口集成
 | 导航分组与历史 | 通过 | 总览/数据智能/运维协同分组；Hash 路由及浏览器后退恢复工作台 |
 | 全局搜索 | 通过 | 进入功能中心并自动聚焦“搜索功能” |
 | 功能中心顺序 | 通过 | 模块 → 功能 → 详情 → 主操作；筛选可一键清除 |
+
+## 19. 2026-08-20 七阶段工程化增量回归
+
+本节为当前代码基线的最新结果；第 13～16 节中的早期缺陷描述保留作历史记录，不能替代本节结论。
+
+| 检查项 | 结果 | 证据 |
+|---|---|---|
+| 后端自动化测试 | 通过 | `PYTHONPATH=backend pytest -q backend/tests`，52 passed；Python `compileall` 通过 |
+| 前端质量门禁 | 通过 | `npm run lint`、`npm run typecheck`、`npm run format:check`、`npm run build` 全部通过 |
+| API 可观测性 | 通过 | 所有响应带 `X-Request-ID` 和基础安全头；`/metrics` 返回 Prometheus 文本指标 |
+| ChatBI 异步体验 | 通过 | 远端真实请求返回只读 SQL、证据和 ECharts 规格；SSE 阶段为 `PLANNING`、`VALIDATING`、`EXECUTING`、`COMPLETED` |
+| 三节点部署 | 通过 | `10.2.106.5/.124/.182` API 均健康；TiDB 节点全部 ready，版本 `8.0.11-TiDB-v9.1.0` |
+| 前端部署 | 通过 | 控制节点 `aegis-web.service` active，`http://10.2.106.5:18081` 返回最新构建产物 |
+| CI 配置 | 已提交 | `.github/workflows/ci.yml` 覆盖前端门禁、后端编译和测试 |
+| Docker 镜像构建 | 未执行 | 当前工作环境 Docker daemon 无可用输出，Dockerfile 已提供，需在构建机复验 |
+| Helm 模板渲染 | 未执行 | 当前环境未安装 Helm CLI，chart 已提供，需在 Kubernetes 工具链中执行 `helm template`/安装回滚 |
+| Playwright/Testcontainers/压测 | 待执行 | 需要浏览器、容器运行时和目标基础设施，列入生产退出门禁 |
 | 最近问数复用 | 通过 | 点击历史问题进入问数页并自动带入问题 |
 | 事件操作闭环 | 通过 | 状态筛选、详情、领取反馈、启动作战室均可点击 |
 | 资产操作闭环 | 通过 | 详情、结构关系入口、治理任务反馈均可点击 |

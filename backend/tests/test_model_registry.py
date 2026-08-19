@@ -93,6 +93,55 @@ class ModelRegistryApiTest(unittest.TestCase):
         activate = self.client.post(f"/api/v1/models/connections/{created.json()['id']}/activate")
         self.assertEqual(activate.status_code, 409)
 
+    def test_model_id_is_optional_when_saving_connection(self) -> None:
+        response = self.client.post(
+            "/api/v1/models/connections",
+            json={
+                "name": "待识别模型网关",
+                "provider": "custom",
+                "deployment": "private",
+                "base_url": "http://10.0.0.9:8000/v1",
+                "test_on_create": False,
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.text)
+        item = response.json()
+        self.assertEqual(item["model"], "")
+        self.assertEqual(item["model_source"], "unspecified")
+        self.assertEqual(item["status"], "unverified")
+
+    def test_blank_model_id_is_discovered_before_chat_probe(self) -> None:
+        client = MagicMock()
+        session = client.__enter__.return_value
+        session.get.return_value.raise_for_status.return_value = None
+        session.get.return_value.json.return_value = {
+            "data": [{"id": "text-embedding-v1"}, {"id": "enterprise-chat"}]
+        }
+        session.post.return_value.raise_for_status.return_value = None
+        session.post.return_value.json.return_value = {
+            "choices": [{"message": {"content": "OK"}}]
+        }
+        with patch("app.model_registry.httpx.Client", return_value=client):
+            response = self.client.post(
+                "/api/v1/models/connections",
+                json={
+                    "name": "自动识别网关",
+                    "provider": "custom",
+                    "deployment": "private",
+                    "base_url": "http://10.0.0.10:8000/v1",
+                    "model": "",
+                    "test_on_create": True,
+                    "set_default": True,
+                },
+            )
+        self.assertEqual(response.status_code, 201, response.text)
+        item = response.json()
+        self.assertEqual(item["model"], "enterprise-chat")
+        self.assertEqual(item["model_source"], "auto")
+        self.assertEqual(item["status"], "ready")
+        self.assertTrue(item["is_default"])
+        self.assertEqual(session.post.call_args.kwargs["json"]["model"], "enterprise-chat")
+
 
 if __name__ == "__main__":
     unittest.main()

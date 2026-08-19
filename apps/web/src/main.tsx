@@ -53,6 +53,10 @@ import {
   MonitorUp,
   PanelsTopLeft,
   Trash2,
+  Eye,
+  EyeOff,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import "./styles.css";
 import "./optimizer.css";
@@ -62,8 +66,12 @@ import "./capabilities.css";
 import "./polish.css";
 import "./chatbi.css";
 import "./models.css";
+import "./agents.css";
 import "./datasources.css";
 import "./relationships.css";
+import "./login.css";
+import "./operation.css";
+import "./shell.css";
 
 type Page =
   | "workbench"
@@ -76,6 +84,7 @@ type Page =
   | "scenarios"
   | "knowledge"
   | "models"
+  | "agents"
   | "datasources"
   | "settings";
 type QueryModule = "chatbi" | "dashboard";
@@ -90,6 +99,7 @@ const ROUTABLE_PAGES: Page[] = [
   "scenarios",
   "knowledge",
   "models",
+  "agents",
   "datasources",
   "settings",
 ];
@@ -178,6 +188,59 @@ type QueryResult = {
   chart?: { option?: EChartsOption; type: string; title: string };
   created_at: string;
 };
+type IncidentRecord = {
+  id: string;
+  title: string;
+  severity: string;
+  status: string;
+  service: string;
+  started_at: string;
+  summary: string;
+  recommended_action: string;
+};
+type AssetRecord = {
+  id: string;
+  name: string;
+  type: string;
+  owner: string;
+  status: string;
+  database: string;
+  description: string;
+  columns: { name: string; type: string; sensitivity?: string }[];
+  upstream: string[];
+  downstream: string[];
+  row_count?: number;
+  quality_score?: number;
+};
+type WorkbenchSummary = {
+  metrics: {
+    open_incidents: number;
+    critical_incidents: number;
+    managed_assets: number;
+    query_success_rate: number;
+  };
+  incidents: IncidentRecord[];
+  recent_queries: QueryResult[];
+};
+type WorkspaceSettings = {
+  workspace_name: string;
+  language: string;
+  timezone: string;
+  data_retention_days: number;
+  tidb_mcp_endpoint: string;
+  allowed_data_root: string;
+  readonly_sql: boolean;
+  operation_audit: boolean;
+  high_risk_approval: boolean;
+  local_models_only: boolean;
+  updated_at: string;
+};
+type OperationPhase = "IDLE" | "PLANNING" | "VALIDATING" | "EXECUTING" | "COMPLETED" | "FAILED";
+type OperationProgressState = {
+  phase: OperationPhase;
+  detail: string;
+  progress: number;
+};
 type Dataset = {
   id: string;
   name: string;
@@ -217,15 +280,7 @@ type DashboardReport = {
   created_at: string;
 };
 type ModelProvider = {
-  id:
-    | "openai"
-    | "deepseek"
-    | "qwen"
-    | "zhipu"
-    | "moonshot"
-    | "ollama"
-    | "vllm"
-    | "custom";
+  id: "openai" | "deepseek" | "qwen" | "zhipu" | "moonshot" | "ollama" | "vllm" | "custom";
   name: string;
   deployment: "public" | "private";
   protocol: string;
@@ -243,6 +298,7 @@ type ModelConnection = {
   protocol: string;
   base_url: string;
   model: string;
+  model_source: "manual" | "auto" | "gateway-default" | "unspecified";
   status: "ready" | "unverified" | "error";
   is_default: boolean;
   has_credential: boolean;
@@ -256,6 +312,73 @@ type ModelReadiness = {
   source: "registry" | "environment" | "none";
   connection_id?: string;
   model?: string;
+};
+type AgentTool = {
+  id: string;
+  feature_id: string;
+  name: string;
+  api_ref: string;
+  risk: "read" | "propose" | "approval";
+};
+type AgentTemplate = {
+  id: string;
+  module_id: string;
+  module_name: string;
+  name: string;
+  summary: string;
+  owner_role: string;
+  domain: ProductModule["domain"];
+  target_page?: Page;
+  capabilities: string[];
+  tools: AgentTool[];
+  approval_policy: "read_only" | "human_approval";
+  system_prompt: string;
+};
+type ModuleAgent = {
+  id: string;
+  template_id: string;
+  module_id: string;
+  module_name: string;
+  name: string;
+  summary: string;
+  status: "ready" | "disabled" | "error";
+  enabled: boolean;
+  model_source: "registry" | "environment";
+  model_connection_id?: string;
+  model_connection_name: string;
+  model: string;
+  capabilities: string[];
+  tools: AgentTool[];
+  approval_policy: "read_only" | "human_approval";
+  system_prompt: string;
+  target_page?: Page;
+  created_at: string;
+  updated_at: string;
+  last_tested_at?: string;
+  last_invoked_at?: string;
+  last_error?: string;
+};
+type AgentProvisionResult = {
+  requested: number;
+  created: ModuleAgent[];
+  existing: ModuleAgent[];
+  model_connection_name: string;
+};
+type AgentTestResult = {
+  agent_id: string;
+  passed: boolean;
+  status: ModuleAgent["status"];
+  checks: { key: string; label: string; passed: boolean; detail: string }[];
+  tested_at: string;
+};
+type AgentInvokeResult = {
+  run_id: string;
+  agent_id: string;
+  answer: string;
+  execution_mode: "advisory";
+  approval_required: boolean;
+  available_tools: string[];
+  created_at: string;
 };
 type OptimizerVersion = {
   minor: string;
@@ -342,13 +465,29 @@ type KnowledgeBaseRecord = {
   description: string;
   scope: string;
   embedding_provider: string;
-  retrieval_strategy: string;
+  retrieval_strategy: "lexical" | "semantic" | "hybrid";
+  chunking_strategy: "recursive" | "markdown";
+  splitter_provider: string;
   chunk_size: number;
   chunk_overlap: number;
   document_count: number;
   chunk_count: number;
   created_at: string;
   updated_at: string;
+};
+type KnowledgeIndexMode = {
+  id: "lexical" | "semantic" | "hybrid";
+  name: string;
+  description: string;
+  provider: string;
+  recommended: boolean;
+};
+type KnowledgeChunkingMode = {
+  id: "recursive" | "markdown";
+  name: string;
+  description: string;
+  provider: string;
+  recommended: boolean;
 };
 type KnowledgeDocument = {
   id: string;
@@ -358,9 +497,12 @@ type KnowledgeDocument = {
   mime_type: string;
   content_size: number;
   status: "ready" | "processing" | "failed";
+  enabled: boolean;
   chunk_count: number;
   tags: string[];
   updated_at: string;
+  indexed_at?: string;
+  error_message: string;
 };
 type KnowledgeChunk = {
   id: string;
@@ -375,6 +517,10 @@ type KnowledgeQueryResult = {
   answer: string;
   confidence: "low" | "medium" | "high";
   retrieval_mode: string;
+  generation_mode: "model" | "extractive" | "retrieval-only" | "none";
+  candidate_count: number;
+  score_threshold: number;
+  retrieval_latency_ms: number;
   citations: {
     rank: number;
     document_id: string;
@@ -384,6 +530,9 @@ type KnowledgeQueryResult = {
     excerpt: string;
     source_uri: string;
     tags: string[];
+    position: number;
+    matched_terms: string[];
+    retrieval_reason: string;
   }[];
   knowledge_base_id: string;
   generated_at: string;
@@ -416,73 +565,28 @@ type ProductModule = {
   owner_role: string;
   features: ProductFeature[];
 };
-const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:18082/api/v1"
-).replace(/\/$/, "");
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://localhost:18082/api/v1").replace(
+  /\/$/,
+  "",
+);
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const isMultipart =
-    typeof FormData !== "undefined" && init?.body instanceof FormData;
+  const isMultipart = typeof FormData !== "undefined" && init?.body instanceof FormData;
   const headers = isMultipart
     ? { ...(init?.headers || {}) }
     : { "Content-Type": "application/json", ...(init?.headers || {}) };
   const response = await fetch(API_BASE + path, { ...init, headers });
-  if (!response.ok)
-    throw new Error((await response.text()) || "API " + response.status);
+  if (!response.ok) throw new Error((await response.text()) || "API " + response.status);
   return response.json() as Promise<T>;
 }
-const incidents = [
-  {
-    id: "INC-240819-001",
-    title: "订单同步延迟超过 SLA",
-    service: "订单数据管道",
-    severity: "P1",
-    status: "处理中",
-    time: "08:42",
-  },
-  {
-    id: "INC-240819-002",
-    title: "TiDB 集群节点磁盘使用率高",
-    service: "生产集群 / tidb-03",
-    severity: "P2",
-    status: "待处理",
-    time: "07:18",
-  },
-  {
-    id: "INC-240818-019",
-    title: "营销报表刷新失败",
-    service: "BI 报表服务",
-    severity: "P2",
-    status: "已恢复",
-    time: "昨天 23:06",
-  },
-];
-const assets = [
-  {
-    name: "orders",
-    type: "业务表",
-    owner: "数据平台组",
-    rows: "128.4M",
-    quality: 98,
-    desc: "订单主表，承载交易链路核心事实数据",
-  },
-  {
-    name: "customer_profile",
-    type: "维表",
-    owner: "客户中心",
-    rows: "4.8M",
-    quality: 94,
-    desc: "客户画像与标签宽表，日更",
-  },
-  {
-    name: "dwd_order_detail",
-    type: "明细表",
-    owner: "数仓开发组",
-    rows: "2.1B",
-    quality: 91,
-    desc: "订单明细层，支持经营分析与问数",
-  },
-];
-function Login({ onLogin }: { onLogin: () => void }) {
+function Login({
+  onLogin,
+  error,
+  busy,
+}: {
+  onLogin: (email: string, password: string) => void;
+  error?: string;
+  busy?: boolean;
+}) {
   return (
     <div className="login">
       <div className="login-shell">
@@ -531,7 +635,8 @@ function Login({ onLogin }: { onLogin: () => void }) {
             className="login-card"
             onSubmit={(event) => {
               event.preventDefault();
-              onLogin();
+              const data = new FormData(event.currentTarget);
+              onLogin(String(data.get("email") || ""), String(data.get("password") || ""));
             }}
           >
             <div className="login-form-head">
@@ -542,6 +647,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
             <label htmlFor="login-email">企业账号</label>
             <input
               id="login-email"
+              name="email"
               type="email"
               autoComplete="username"
               placeholder="name@company.com"
@@ -551,6 +657,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
             <label htmlFor="login-password">密码</label>
             <input
               id="login-password"
+              name="password"
               type="password"
               autoComplete="current-password"
               defaultValue="12345678"
@@ -558,10 +665,11 @@ function Login({ onLogin }: { onLogin: () => void }) {
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
-                  onLogin();
+                  event.currentTarget.form?.requestSubmit();
                 }
               }}
             />
+            {error && <div className="form-error">{error}</div>}
             <div className="login-environment">
               <span className="status-dot" />
               <span>
@@ -569,12 +677,10 @@ function Login({ onLogin }: { onLogin: () => void }) {
                 <small>数据不会发送到外部服务</small>
               </span>
             </div>
-            <button className="primary wide" type="submit">
-              登录工作台 <ArrowUpRight size={16} />
+            <button className="primary wide" type="submit" disabled={busy}>
+              {busy ? "正在登录…" : "登录工作台"} <ArrowUpRight size={16} />
             </button>
-            <small className="login-help">
-              登录即表示你已同意企业安全与审计策略
-            </small>
+            <small className="login-help">登录即表示你已同意企业安全与审计策略</small>
           </form>
         </section>
       </div>
@@ -583,6 +689,10 @@ function Login({ onLogin }: { onLogin: () => void }) {
 }
 function App() {
   const [logged, setLogged] = useState(false);
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [loginError, setLoginError] = useState("");
+  const [workspaceName, setWorkspaceName] = useState("本地演示空间");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [page, setPage] = useState<Page>(pageFromLocation);
   const [notice, setNotice] = useState("");
   const [focusCapabilitySearch, setFocusCapabilitySearch] = useState(false);
@@ -621,14 +731,13 @@ function App() {
       "平台管理",
       [
         ["models", "模型接入", CloudCog],
+        ["agents", "Agent 中心", Bot],
         ["datasources", "数据源管理", Database],
       ],
     ],
   ];
   const nav = navGroups.flatMap(([, items]) => items);
-  const activeGroup = navGroups.find(([, items]) =>
-    items.some(([id]) => id === page),
-  )?.[0];
+  const activeGroup = navGroups.find(([, items]) => items.some(([id]) => id === page))?.[0];
   const pageTitle =
     page === "settings"
       ? "系统设置"
@@ -640,8 +749,7 @@ function App() {
   const navigatePage = (next: Page) => {
     setPage(next);
     const nextHash = `#/${next}`;
-    if (window.location.hash !== nextHash)
-      window.history.pushState({ page: next }, "", nextHash);
+    if (window.location.hash !== nextHash) window.history.pushState({ page: next }, "", nextHash);
   };
   const openQuery = (question = "") => {
     setQuerySeed(question);
@@ -656,8 +764,7 @@ function App() {
     navigatePage("query");
   };
   useEffect(() => {
-    if (!window.location.hash)
-      window.history.replaceState({ page }, "", `#/${page}`);
+    if (!window.location.hash) window.history.replaceState({ page }, "", `#/${page}`);
     const handleHistory = () => setPage(pageFromLocation());
     window.addEventListener("popstate", handleHistory);
     return () => window.removeEventListener("popstate", handleHistory);
@@ -668,9 +775,22 @@ function App() {
   useEffect(() => {
     setQueryExpanded(page === "query");
   }, [page]);
-  const handleLogin = async () => {
-    setLogged(true);
+  useEffect(() => {
+    if (!logged) return;
+    void api<WorkspaceSettings>("/settings")
+      .then((item) => setWorkspaceName(item.workspace_name))
+      .catch(() => undefined);
+  }, [logged]);
+  const handleLogin = async (email: string, password: string) => {
+    setLoginBusy(true);
+    setLoginError("");
     try {
+      const session = await api<{ session_id: string }>("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      localStorage.setItem("aegis_session_id", session.session_id);
+      setLogged(true);
       const readiness = await api<ModelReadiness>("/models/readiness");
       if (!readiness.ready) {
         setModelOnboarding(true);
@@ -679,27 +799,37 @@ function App() {
         setModelOnboarding(false);
         navigatePage(page);
       }
-    } catch {
-      setModelOnboarding(true);
-      navigatePage("models");
+    } catch (reason) {
+      setLoginError(reason instanceof Error ? reason.message : "登录失败，请检查账号和密码");
+    } finally {
+      setLoginBusy(false);
     }
   };
-  if (!logged) return <Login onLogin={() => void handleLogin()} />;
+  if (!logged)
+    return (
+      <Login
+        onLogin={(email, password) => void handleLogin(email, password)}
+        error={loginError}
+        busy={loginBusy}
+      />
+    );
+  const runtimeEnvironment = String(import.meta.env.VITE_ENV || "development");
+  const isProduction = runtimeEnvironment === "production";
   return (
-    <div className="app">
+    <div className={sidebarCollapsed ? "app sidebar-collapsed" : "app"}>
       <aside className="app-sidebar">
         <div className="logo">
           <span>A</span>
-          <div>
+          <div className="logo-copy">
             <b>Aegis AI</b>
             <small>Control Plane</small>
           </div>
         </div>
         <div className="workspace-switch">
           <Building2 size={17} />
-          <span>
+          <span className="workspace-copy">
             <small>当前工作区</small>
-            <b>本地演示空间</b>
+            <b>{workspaceName}</b>
           </span>
         </div>
         <nav className="sidebar-nav" aria-label="产品导航">
@@ -710,9 +840,7 @@ function App() {
                 id === "query" ? (
                   <React.Fragment key={id}>
                     <button
-                      className={
-                        page === id ? "nav nav-parent active" : "nav nav-parent"
-                      }
+                      className={page === id ? "nav nav-parent active" : "nav nav-parent"}
                       aria-label={label}
                       aria-expanded={queryExpanded}
                       aria-controls="query-subnav"
@@ -724,11 +852,7 @@ function App() {
                     >
                       <Icon size={18} />
                       <span className="nav-label">{label}</span>
-                      <ChevronDown
-                        className="nav-chevron"
-                        size={15}
-                        aria-hidden="true"
-                      />
+                      <ChevronDown className="nav-chevron" size={15} aria-hidden="true" />
                     </button>
                     {queryExpanded && (
                       <div className="nav-subgroup" id="query-subnav">
@@ -740,9 +864,7 @@ function App() {
                           }
                           aria-label="ChatBI"
                           aria-current={
-                            page === "query" && queryModule === "chatbi"
-                              ? "page"
-                              : undefined
+                            page === "query" && queryModule === "chatbi" ? "page" : undefined
                           }
                           onClick={() => openQueryModule("chatbi")}
                         >
@@ -757,9 +879,7 @@ function App() {
                           }
                           aria-label="大屏展示"
                           aria-current={
-                            page === "query" && queryModule === "dashboard"
-                              ? "page"
-                              : undefined
+                            page === "query" && queryModule === "dashboard" ? "page" : undefined
                           }
                           onClick={() => openQueryModule("dashboard")}
                         >
@@ -802,7 +922,13 @@ function App() {
             aria-label="退出登录"
             title="退出登录"
             onClick={() => {
+              const sessionId = localStorage.getItem("aegis_session_id");
+              void api("/auth/logout", {
+                method: "POST",
+                body: JSON.stringify({ session_id: sessionId }),
+              }).catch(() => undefined);
               setLogged(false);
+              localStorage.removeItem("aegis_session_id");
               setModelOnboarding(false);
               navigatePage("workbench");
             }}
@@ -815,6 +941,14 @@ function App() {
       <main>
         <header className="topbar">
           <div className="page-context">
+            <button
+              className="topbar-icon sidebar-toggle"
+              aria-label={sidebarCollapsed ? "展开侧栏" : "收起侧栏"}
+              title={sidebarCollapsed ? "展开侧栏" : "收起侧栏"}
+              onClick={() => setSidebarCollapsed((current) => !current)}
+            >
+              {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            </button>
             <span className="eyebrow">{activeGroup || "平台管理"}</span>
             <h2>{pageTitle}</h2>
           </div>
@@ -829,9 +963,9 @@ function App() {
             <span>搜索功能、场景或数据</span>
           </button>
           <div className="user topbar-actions">
-            <span className="environment-badge">
+            <span className={isProduction ? "environment-badge production" : "environment-badge"}>
               <span className="status-dot" />
-              本地演示
+              {isProduction ? "生产环境" : "开发环境"}
             </span>
             <button
               className="topbar-icon"
@@ -859,14 +993,9 @@ function App() {
             </button>
           </div>
         )}
-        {page === "workbench" && (
-          <Workbench setPage={navigatePage} openQuery={openQuery} />
-        )}{" "}
+        {page === "workbench" && <Workbench setPage={navigatePage} openQuery={openQuery} />}{" "}
         {page === "capabilities" && (
-          <CapabilityCenter
-            setPage={navigatePage}
-            focusSearch={focusCapabilitySearch}
-          />
+          <CapabilityCenter setPage={navigatePage} focusSearch={focusCapabilitySearch} />
         )}{" "}
         {page === "query" && (
           <QueryV2
@@ -876,18 +1005,17 @@ function App() {
           />
         )}{" "}
         {page === "incidents" && <Incidents setPage={navigatePage} />}{" "}
-        {page === "scenarios" && <ScenarioCenter />}{" "}
-        {page === "knowledge" && <KnowledgeBasePage />}{" "}
+        {page === "scenarios" && <ScenarioCenter />} {page === "knowledge" && <KnowledgeBasePage />}{" "}
         {page === "models" && (
           <ModelConnectionsPage
             onboarding={modelOnboarding}
             onComplete={() => setModelOnboarding(false)}
             enterWorkspace={() => navigatePage("workbench")}
+            openAgents={() => navigatePage("agents")}
           />
         )}{" "}
-        {page === "datasources" && (
-          <DataSourceManagementPage setPage={navigatePage} />
-        )}{" "}
+        {page === "agents" && <AgentCenterPage setPage={navigatePage} />}{" "}
+        {page === "datasources" && <DataSourceManagementPage setPage={navigatePage} />}{" "}
         {page === "sql-optimizer" && <SQLOptimizerPage />}{" "}
         {page === "assets" && <AssetsV2 setPage={navigatePage} />}{" "}
         {page === "catalog" && <CatalogPage setPage={navigatePage} />}
@@ -908,9 +1036,7 @@ function CapabilityCenter({
   const [selectedFeatureId, setSelectedFeatureId] = useState("");
   const [search, setSearch] = useState("");
   const [role, setRole] = useState("all");
-  const [state, setState] = useState<"all" | ProductFeature["delivery_state"]>(
-    "all",
-  );
+  const [state, setState] = useState<"all" | ProductFeature["delivery_state"]>("all");
   const [error, setError] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const featuresRef = useRef<HTMLDivElement>(null);
@@ -930,9 +1056,7 @@ function CapabilityCenter({
         setSelectedModuleId(items[0]?.id || "");
         setSelectedFeatureId(items[0]?.features[0]?.id || "");
       })
-      .catch((reason) =>
-        setError(reason instanceof Error ? reason.message : "功能目录加载失败"),
-      );
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "功能目录加载失败"));
   }, []);
   useEffect(() => {
     if (focusSearch) searchRef.current?.focus();
@@ -941,11 +1065,7 @@ function CapabilityCenter({
   const roles = useMemo(
     () =>
       Array.from(
-        new Set(
-          modules.flatMap((module) =>
-            module.features.flatMap((item) => item.roles),
-          ),
-        ),
+        new Set(modules.flatMap((module) => module.features.flatMap((item) => item.roles))),
       ).sort((left, right) => left.localeCompare(right, "zh-CN")),
     [modules],
   );
@@ -967,8 +1087,7 @@ function CapabilityCenter({
       .filter((module) => module.features.length > 0);
   }, [modules, role, search, state]);
   const selectedModule =
-    visibleModules.find((module) => module.id === selectedModuleId) ||
-    visibleModules[0];
+    visibleModules.find((module) => module.id === selectedModuleId) || visibleModules[0];
   const selectedFeature =
     selectedModule?.features.find((item) => item.id === selectedFeatureId) ||
     selectedModule?.features[0];
@@ -993,9 +1112,7 @@ function CapabilityCenter({
         <div>
           <span className="eyebrow">模块 · 功能 · 角色 · 交付状态</span>
           <h1>功能中心</h1>
-          <p className="section-subtitle">
-            按当前职责选择可执行功能，已接入页面可直接进入。
-          </p>
+          <p className="section-subtitle">按当前职责选择可执行功能，已接入页面可直接进入。</p>
         </div>
         <span className="chip success">{modules.length} 个模块</span>
       </div>
@@ -1006,18 +1123,8 @@ function CapabilityCenter({
           hint="接口与页面已联通"
           tone="green"
         />
-        <Metric
-          label="演示闭环"
-          value={String(counts.demo)}
-          hint="等待真实 Adapter"
-          tone="blue"
-        />
-        <Metric
-          label="生产接入"
-          value={String(counts.planned)}
-          hint="按架构计划实施"
-          tone="red"
-        />
+        <Metric label="演示闭环" value={String(counts.demo)} hint="等待真实 Adapter" tone="blue" />
+        <Metric label="生产接入" value={String(counts.planned)} hint="按架构计划实施" tone="red" />
       </div>
       <div className="capability-toolbar">
         <div className="capability-search">
@@ -1045,9 +1152,7 @@ function CapabilityCenter({
         <select
           value={state}
           onChange={(event) =>
-            setState(
-              event.target.value as "all" | ProductFeature["delivery_state"],
-            )
+            setState(event.target.value as "all" | ProductFeature["delivery_state"])
           }
           aria-label="按交付状态筛选"
         >
@@ -1082,9 +1187,7 @@ function CapabilityCenter({
             <button
               key={module.id}
               className={
-                selectedModule?.id === module.id
-                  ? "capability-module active"
-                  : "capability-module"
+                selectedModule?.id === module.id ? "capability-module active" : "capability-module"
               }
               onClick={() => {
                 setSelectedModuleId(module.id);
@@ -1112,9 +1215,7 @@ function CapabilityCenter({
             <button
               key={item.id}
               className={
-                selectedFeature?.id === item.id
-                  ? "capability-feature active"
-                  : "capability-feature"
+                selectedFeature?.id === item.id ? "capability-feature active" : "capability-feature"
               }
               onClick={() => {
                 setSelectedFeatureId(item.id);
@@ -1154,15 +1255,9 @@ function CapabilityCenter({
               </div>
               <CapabilityFact title="需要" items={selectedFeature.inputs} />
               <CapabilityFact title="产出" items={selectedFeature.outputs} />
-              <CapabilityFact
-                title="安全门禁"
-                items={selectedFeature.guardrails}
-              />
+              <CapabilityFact title="安全门禁" items={selectedFeature.guardrails} />
               {!!selectedFeature.scenario_ids.length && (
-                <CapabilityFact
-                  title="关联场景"
-                  items={selectedFeature.scenario_ids}
-                />
+                <CapabilityFact title="关联场景" items={selectedFeature.scenario_ids} />
               )}
               {!!selectedFeature.api_refs.length && (
                 <div className="capability-api">
@@ -1175,13 +1270,9 @@ function CapabilityCenter({
               <button
                 className="primary capability-open"
                 disabled={
-                  selectedFeature.delivery_state === "planned" ||
-                  !selectedFeature.target_page
+                  selectedFeature.delivery_state === "planned" || !selectedFeature.target_page
                 }
-                onClick={() =>
-                  selectedFeature.target_page &&
-                  setPage(selectedFeature.target_page)
-                }
+                onClick={() => selectedFeature.target_page && setPage(selectedFeature.target_page)}
               >
                 {selectedFeature.delivery_state === "planned"
                   ? "待生产接入"
@@ -1216,11 +1307,19 @@ function Workbench({
   setPage: (p: Page) => void;
   openQuery: (question?: string) => void;
 }) {
+  const [summary, setSummary] = useState<WorkbenchSummary | null>(null);
+  const [error, setError] = useState("");
   const today = new Intl.DateTimeFormat("zh-CN", {
     month: "long",
     day: "numeric",
     weekday: "long",
   }).format(new Date());
+  useEffect(() => {
+    void api<WorkbenchSummary>("/workbench/summary")
+      .then(setSummary)
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "工作台加载失败"));
+  }, []);
+  const metrics = summary?.metrics;
   return (
     <section className="content workbench-page">
       <div className="welcome workbench-hero">
@@ -1250,26 +1349,32 @@ function Workbench({
         </div>
       </div>
       <div className="metrics">
-        <Metric label="待处理事件" value="2" hint="较昨日 -1" tone="red" />
         <Metric
-          label="今日数据任务"
-          value="24"
-          hint="22 个已完成"
+          label="待处理事件"
+          value={String(metrics?.open_incidents ?? "-")}
+          hint={`${metrics?.critical_incidents ?? 0} 个 P1 事件`}
+          tone="red"
+        />
+        <Metric
+          label="已管理资产"
+          value={String(metrics?.managed_assets ?? "-")}
+          hint="来自治理目录"
           tone="green"
         />
         <Metric
-          label="数据质量评分"
-          value="96.4"
-          hint="较上周 +1.2"
+          label="问数成功率"
+          value={metrics ? `${metrics.query_success_rate}%` : "-"}
+          hint="最近运行统计"
           tone="blue"
         />
         <Metric
-          label="AI 节省工时"
-          value="18.6h"
-          hint="本周累计"
+          label="平台状态"
+          value={summary ? "正常" : "加载中"}
+          hint="控制面 API"
           tone="purple"
         />
       </div>
+      {error && <div className="error-banner">{error}</div>}
       <div className="workbench-section-label">
         <div>
           <span className="eyebrow">快捷入口</span>
@@ -1281,13 +1386,7 @@ function Workbench({
       </div>
       <div className="workbench-tasks" aria-label="常用工作">
         {[
-          [
-            "query",
-            "数据分析",
-            "经营数据分析",
-            "自然语言转 SQL 并生成图表",
-            MessageSquare,
-          ],
+          ["query", "数据分析", "经营数据分析", "自然语言转 SQL 并生成图表", MessageSquare],
           [
             "knowledge",
             "知识检索",
@@ -1302,19 +1401,9 @@ function Workbench({
             "按 TiDB 版本分析执行计划与索引建议",
             WandSparkles,
           ],
-          [
-            "scenarios",
-            "协同执行",
-            "发起协同任务",
-            "按模板执行巡检、报告与故障处置",
-            Workflow,
-          ],
+          ["scenarios", "协同执行", "发起协同任务", "按模板执行巡检、报告与故障处置", Workflow],
         ].map(([id, category, title, description, Icon]) => (
-          <button
-            className="workbench-task"
-            key={String(id)}
-            onClick={() => setPage(id as Page)}
-          >
+          <button className="workbench-task" key={String(id)} onClick={() => setPage(id as Page)}>
             <span className="task-icon">
               <Icon size={19} />
             </span>
@@ -1341,20 +1430,31 @@ function Workbench({
               查看全部 <ChevronRight size={14} />
             </button>
           </div>
-          {incidents.slice(0, 2).map((i) => (
+          {(summary?.incidents || []).slice(0, 2).map((i) => (
             <div className="list-row" key={i.id}>
-              <div className={"severity " + i.severity.toLowerCase()}>
-                {i.severity}
-              </div>
+              <div className={"severity " + i.severity.toLowerCase()}>{i.severity}</div>
               <div className="row-main">
                 <b>{i.title}</b>
                 <span>
-                  {i.service} · {i.time}
+                  {i.service} ·{" "}
+                  {new Date(i.started_at).toLocaleTimeString("zh-CN", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
                 </span>
               </div>
-              <span className="chip">{i.status}</span>
+              <span className="chip">
+                {i.status === "investigating"
+                  ? "处理中"
+                  : i.status === "open"
+                    ? "待处理"
+                    : i.status === "resolved"
+                      ? "已恢复"
+                      : i.status}
+              </span>
             </div>
           ))}
+          {!summary?.incidents.length && <div className="empty">暂无待关注事件</div>}
         </div>
         <div className="panel recent-panel">
           <div className="panel-head">
@@ -1369,22 +1469,24 @@ function Workbench({
               新建问题 <ChevronRight size={14} />
             </button>
           </div>
-          {[
-            "近 30 天各区域 GMV 趋势",
-            "订单取消率最高的商品品类",
-            "本月新客留存率",
-          ].map((x, i) => (
+          {(summary?.recent_queries || []).slice(0, 3).map((item) => (
             <button
               className="query-row query-history-button"
-              key={x}
-              onClick={() => openQuery(x)}
+              key={item.operation_id}
+              onClick={() => openQuery(item.question)}
             >
               <MessageSquare size={15} />
-              <span>{x}</span>
-              <small>{i + 1} 小时前</small>
+              <span>{item.question}</span>
+              <small>
+                {new Date(item.created_at).toLocaleTimeString("zh-CN", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </small>
               <ChevronRight size={14} />
             </button>
           ))}
+          {!summary?.recent_queries.length && <div className="empty">暂无问数记录</div>}
         </div>
       </div>
     </section>
@@ -1415,11 +1517,7 @@ function Metric({
 
 type DataSourceFilter = "all" | "database" | "file";
 
-function DataSourceManagementPage({
-  setPage,
-}: {
-  setPage: (page: Page) => void;
-}) {
+function DataSourceManagementPage({ setPage }: { setPage: (page: Page) => void }) {
   const [sources, setSources] = useState<DataSourceRecord[]>([]);
   const [filter, setFilter] = useState<DataSourceFilter>("all");
   const [search, setSearch] = useState("");
@@ -1428,9 +1526,7 @@ function DataSourceManagementPage({
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [deleteTarget, setDeleteTarget] = useState<DataSourceRecord | null>(
-    null,
-  );
+  const [deleteTarget, setDeleteTarget] = useState<DataSourceRecord | null>(null);
   const [form, setForm] = useState({
     name: "",
     kind: "tidb" as "tidb" | "mysql",
@@ -1514,10 +1610,9 @@ function DataSourceManagementPage({
     setError("");
     setMessage("");
     try {
-      const updated = await api<DataSourceRecord>(
-        `/chatbi/datasources/${item.id}/test`,
-        { method: "POST" },
-      );
+      const updated = await api<DataSourceRecord>(`/chatbi/datasources/${item.id}/test`, {
+        method: "POST",
+      });
       await loadSources();
       if (updated.status === "ready") setMessage(`${updated.name} 连接正常`);
       else setError(updated.last_error || "连接测试失败");
@@ -1531,10 +1626,9 @@ function DataSourceManagementPage({
     if (!deleteTarget) return;
     setBusy(deleteTarget.id);
     try {
-      const response = await fetch(
-        `${API_BASE}/chatbi/datasources/${deleteTarget.id}`,
-        { method: "DELETE" },
-      );
+      const response = await fetch(`${API_BASE}/chatbi/datasources/${deleteTarget.id}`, {
+        method: "DELETE",
+      });
       if (!response.ok) throw new Error((await response.text()) || "删除失败");
       await loadSources();
       setMessage(`${deleteTarget.name} 已删除`);
@@ -1551,8 +1645,7 @@ function DataSourceManagementPage({
   };
   const visible = sources.filter((item) => {
     const matchesType =
-      filter === "all" ||
-      (filter === "database" ? item.kind !== "csv" : item.kind === "csv");
+      filter === "all" || (filter === "database" ? item.kind !== "csv" : item.kind === "csv");
     const haystack =
       `${item.name} ${item.kind} ${item.database || ""} ${item.host || ""}`.toLowerCase();
     return matchesType && haystack.includes(search.trim().toLowerCase());
@@ -1658,19 +1751,13 @@ function DataSourceManagementPage({
               <div className="datasource-card-head">
                 <span className={`datasource-kind-icon ${item.kind}`}>
                   <>
-                    {item.kind === "csv" ? (
-                      <FileSpreadsheet size={19} />
-                    ) : (
-                      <Database size={19} />
-                    )}
+                    {item.kind === "csv" ? <FileSpreadsheet size={19} /> : <Database size={19} />}
                   </>
                 </span>
                 <div>
                   <h3>{item.name}</h3>
                   <span>
-                    {item.kind === "csv"
-                      ? "文件数据"
-                      : `${item.kind.toUpperCase()} 数据库`}
+                    {item.kind === "csv" ? "文件数据" : `${item.kind.toUpperCase()} 数据库`}
                   </span>
                 </div>
                 <span
@@ -1715,9 +1802,7 @@ function DataSourceManagementPage({
                     </span>
                   </>
                 )}
-                {item.last_error && (
-                  <p className="datasource-card-error">{item.last_error}</p>
-                )}
+                {item.last_error && <p className="datasource-card-error">{item.last_error}</p>}
               </div>
               <div className="datasource-card-actions">
                 {item.kind !== "csv" && item.host && (
@@ -1768,11 +1853,7 @@ function DataSourceManagementPage({
                 <span className="eyebrow">新建数据源</span>
                 <h3>选择添加方式</h3>
               </div>
-              <button
-                className="icon-button"
-                onClick={() => setShowAdd(false)}
-                aria-label="关闭"
-              >
+              <button className="icon-button" onClick={() => setShowAdd(false)} aria-label="关闭">
                 <X size={16} />
               </button>
             </div>
@@ -1822,9 +1903,7 @@ function DataSourceManagementPage({
                   <input
                     required
                     value={form.name}
-                    onChange={(event) =>
-                      setForm({ ...form, name: event.target.value })
-                    }
+                    onChange={(event) => setForm({ ...form, name: event.target.value })}
                     placeholder="例如：经营分析库"
                   />
                 </label>
@@ -1834,9 +1913,7 @@ function DataSourceManagementPage({
                     <input
                       required
                       value={form.host}
-                      onChange={(event) =>
-                        setForm({ ...form, host: event.target.value })
-                      }
+                      onChange={(event) => setForm({ ...form, host: event.target.value })}
                       placeholder="db.internal"
                     />
                   </label>
@@ -1846,9 +1923,7 @@ function DataSourceManagementPage({
                       required
                       type="number"
                       value={form.port}
-                      onChange={(event) =>
-                        setForm({ ...form, port: event.target.value })
-                      }
+                      onChange={(event) => setForm({ ...form, port: event.target.value })}
                     />
                   </label>
                 </div>
@@ -1858,9 +1933,7 @@ function DataSourceManagementPage({
                     <input
                       required
                       value={form.database}
-                      onChange={(event) =>
-                        setForm({ ...form, database: event.target.value })
-                      }
+                      onChange={(event) => setForm({ ...form, database: event.target.value })}
                       placeholder="analytics"
                     />
                   </label>
@@ -1869,9 +1942,7 @@ function DataSourceManagementPage({
                     <input
                       required
                       value={form.username}
-                      onChange={(event) =>
-                        setForm({ ...form, username: event.target.value })
-                      }
+                      onChange={(event) => setForm({ ...form, username: event.target.value })}
                     />
                   </label>
                 </div>
@@ -1880,9 +1951,7 @@ function DataSourceManagementPage({
                   <input
                     type="password"
                     value={form.password}
-                    onChange={(event) =>
-                      setForm({ ...form, password: event.target.value })
-                    }
+                    onChange={(event) => setForm({ ...form, password: event.target.value })}
                     placeholder="留空表示无密码"
                     autoComplete="new-password"
                   />
@@ -1891,24 +1960,14 @@ function DataSourceManagementPage({
                   <ShieldCheck size={16} />
                   <span>
                     <b>使用只读账号</b>
-                    <small>
-                      密码与连接信息分开保存，页面和接口不会回显密码。
-                    </small>
+                    <small>密码与连接信息分开保存，页面和接口不会回显密码。</small>
                   </span>
                 </div>
                 <div className="modal-actions">
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={() => setShowAdd(false)}
-                  >
+                  <button type="button" className="secondary" onClick={() => setShowAdd(false)}>
                     取消
                   </button>
-                  <button
-                    className="primary"
-                    disabled={busy === "create"}
-                    type="submit"
-                  >
+                  <button className="primary" disabled={busy === "create"} type="submit">
                     {busy === "create" ? (
                       <>
                         <Clock3 size={15} />
@@ -1967,10 +2026,7 @@ function DataSourceManagementPage({
               ”的连接记录。已生成的历史问数结果不会自动删除。
             </p>
             <div className="modal-actions">
-              <button
-                className="secondary"
-                onClick={() => setDeleteTarget(null)}
-              >
+              <button className="secondary" onClick={() => setDeleteTarget(null)}>
                 取消
               </button>
               <button
@@ -1988,14 +2044,449 @@ function DataSourceManagementPage({
   );
 }
 
+function AgentCenterPage({ setPage }: { setPage: (page: Page) => void }) {
+  const [templates, setTemplates] = useState<AgentTemplate[]>([]);
+  const [agents, setAgents] = useState<ModuleAgent[]>([]);
+  const [readiness, setReadiness] = useState<ModelReadiness>();
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [selectedAgent, setSelectedAgent] = useState<ModuleAgent>();
+  const [testResult, setTestResult] = useState<AgentTestResult>();
+  const [testInput, setTestInput] = useState("");
+  const [invokeResult, setInvokeResult] = useState<AgentInvokeResult>();
+
+  const load = async () => {
+    const [templateItems, agentItems, modelState] = await Promise.all([
+      api<AgentTemplate[]>("/agents/templates"),
+      api<ModuleAgent[]>("/agents"),
+      api<ModelReadiness>("/models/readiness"),
+    ]);
+    setTemplates(templateItems);
+    setAgents(agentItems);
+    setReadiness(modelState);
+  };
+  useEffect(() => {
+    load().catch((reason) =>
+      setError(reason instanceof Error ? reason.message : "Agent 中心加载失败"),
+    );
+  }, []);
+
+  const agentByTemplate = useMemo(
+    () => new Map(agents.map((item) => [item.template_id, item])),
+    [agents],
+  );
+  const missingCount = templates.filter((item) => !agentByTemplate.has(item.id)).length;
+  const readyCount = agents.filter((item) => item.status === "ready").length;
+  const approvalCount = agents.filter((item) => item.approval_policy === "human_approval").length;
+
+  const provisionAll = async () => {
+    setBusy("provision");
+    setError("");
+    try {
+      const result = await api<AgentProvisionResult>("/agents/provision", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      setMessage(
+        result.created.length
+          ? `已使用 ${result.model_connection_name} 创建 ${result.created.length} 个 Agent`
+          : "全部模块 Agent 已存在，无需重复创建",
+      );
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "批量创建失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const createOne = async (template: AgentTemplate) => {
+    setBusy(template.id);
+    setError("");
+    try {
+      await api<ModuleAgent>("/agents", {
+        method: "POST",
+        body: JSON.stringify({ template_id: template.id }),
+      });
+      setMessage(`${template.name} 已创建`);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Agent 创建失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const toggleAgent = async (agent: ModuleAgent, enabled: boolean) => {
+    setBusy(agent.id);
+    setError("");
+    try {
+      await api<ModuleAgent>(`/agents/${agent.id}/enabled`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled }),
+      });
+      setMessage(`${agent.name} 已${enabled ? "启用" : "停用"}`);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "状态更新失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const removeAgent = async (agent: ModuleAgent) => {
+    if (!window.confirm(`删除“${agent.name}”？之后可从模板重新创建。`)) return;
+    setBusy(agent.id);
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE}/agents/${agent.id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) throw new Error(await response.text());
+      setMessage(`${agent.name} 已删除`);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Agent 删除失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const checkAgent = async (agent: ModuleAgent) => {
+    setBusy(`check-${agent.id}`);
+    setTestResult(undefined);
+    setError("");
+    try {
+      const result = await api<AgentTestResult>(`/agents/${agent.id}/test`, {
+        method: "POST",
+      });
+      setTestResult(result);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Agent 自检失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const openTester = (agent: ModuleAgent) => {
+    setSelectedAgent(agent);
+    setTestInput(`请说明你能协助完成哪些${agent.module_name}任务，以及当前安全边界。`);
+    setInvokeResult(undefined);
+    setTestResult(undefined);
+    void checkAgent(agent);
+  };
+  const invoke = async () => {
+    if (!selectedAgent || !testInput.trim()) return;
+    setBusy(`invoke-${selectedAgent.id}`);
+    setInvokeResult(undefined);
+    setError("");
+    try {
+      const result = await api<AgentInvokeResult>(`/agents/${selectedAgent.id}/invoke`, {
+        method: "POST",
+        body: JSON.stringify({ input: testInput.trim() }),
+      });
+      setInvokeResult(result);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "对话测试失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const domainMeta: Record<
+    ProductModule["domain"],
+    { label: string; Icon: React.ComponentType<{ size?: number }> }
+  > = {
+    data: { label: "数据智能", Icon: Database },
+    operations: { label: "运维", Icon: Activity },
+    collaboration: { label: "协同", Icon: Workflow },
+    platform: { label: "平台", Icon: Settings },
+  };
+
+  return (
+    <section className="content agents-page">
+      <div className="section-head">
+        <div>
+          <span className="eyebrow">模型绑定 · 能力装配 · 权限边界</span>
+          <h1>Agent 中心</h1>
+          <p className="section-subtitle">
+            每个一级模块使用独立 Agent；统一绑定模型，但隔离能力、工具和审批策略。
+          </p>
+        </div>
+        <button
+          className="primary"
+          disabled={!readiness?.ready || missingCount === 0 || busy === "provision"}
+          onClick={() => void provisionAll()}
+        >
+          {busy === "provision" ? (
+            <RefreshCw size={16} />
+          ) : missingCount === 0 ? (
+            <CircleCheck size={16} />
+          ) : (
+            <WandSparkles size={16} />
+          )}
+          {missingCount === 0
+            ? `${templates.length} 个 Agent 已创建`
+            : `一键创建${agents.length ? `剩余 ${missingCount} 个` : "全部"} Agent`}
+        </button>
+      </div>
+      {message && (
+        <div className="notice agent-notice">
+          <CheckCircle2 size={15} />
+          {message}
+          <button onClick={() => setMessage("")} aria-label="关闭提示">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+      {error && <div className="error-banner">{error}</div>}
+      {!readiness?.ready && (
+        <div className="agent-model-gate panel">
+          <span className="agent-gate-icon">
+            <CloudCog size={23} />
+          </span>
+          <div>
+            <b>先连接并启用一个大模型</b>
+            <small>Agent 创建时会固定记录已验证模型，未验证的连接不会被使用。</small>
+          </div>
+          <button className="primary" onClick={() => setPage("models")}>
+            前往模型接入 <ArrowRight size={16} />
+          </button>
+        </div>
+      )}
+      <div className="agent-summary">
+        <div>
+          <span>模块模板</span>
+          <strong>{templates.length}</strong>
+          <small>与功能中心同步</small>
+        </div>
+        <div>
+          <span>已创建</span>
+          <strong>{agents.length}</strong>
+          <small>重复点击不会重复生成</small>
+        </div>
+        <div>
+          <span>运行就绪</span>
+          <strong>{readyCount}</strong>
+          <small>模型与策略自检通过</small>
+        </div>
+        <div>
+          <span>需人工审批</span>
+          <strong>{approvalCount}</strong>
+          <small>禁止直接执行高风险动作</small>
+        </div>
+      </div>
+      <div className="agent-context-bar">
+        <span className={readiness?.ready ? "ready" : ""}>
+          <span className={`model-status ${readiness?.ready ? "ready" : ""}`} />
+          {readiness?.ready
+            ? `当前模型：${readiness.model || "服务默认模型"}`
+            : "当前没有可用默认模型"}
+        </span>
+        <small>创建后模型绑定保持不变；工具默认只读或仅建议。</small>
+      </div>
+      <div className="agent-grid">
+        {templates.map((template) => {
+          const agent = agentByTemplate.get(template.id);
+          const meta = domainMeta[template.domain];
+          const Icon = meta.Icon;
+          return (
+            <article
+              className={`agent-card panel ${agent?.status || "template"}`}
+              key={template.id}
+            >
+              <div className="agent-card-head">
+                <span className={`agent-module-icon ${template.domain}`}>
+                  <Icon size={19} />
+                </span>
+                <div>
+                  <small>
+                    {meta.label} · {template.owner_role}
+                  </small>
+                  <h3>{agent?.name || template.name}</h3>
+                </div>
+                <span className={`agent-state ${agent?.status || "template"}`}>
+                  {!agent
+                    ? "待创建"
+                    : agent.status === "ready"
+                      ? "已就绪"
+                      : agent.status === "disabled"
+                        ? "已停用"
+                        : "需处理"}
+                </span>
+              </div>
+              <p>{template.summary}</p>
+              <div className="agent-card-facts">
+                <span>
+                  <b>{template.capabilities.length}</b> 项模块能力
+                </span>
+                <span>
+                  <b>{template.tools.length}</b> 个允许工具
+                </span>
+                <span
+                  className={
+                    template.approval_policy === "human_approval" ? "approval" : "readonly"
+                  }
+                >
+                  {template.approval_policy === "human_approval" ? "人工审批" : "只读分析"}
+                </span>
+              </div>
+              {agent ? (
+                <>
+                  <div className="agent-model-binding">
+                    <Bot size={14} />
+                    <span>
+                      <small>绑定模型</small>
+                      <b>
+                        {agent.model_connection_name} · {agent.model}
+                      </b>
+                    </span>
+                  </div>
+                  {agent.last_error && <div className="agent-card-error">{agent.last_error}</div>}
+                  <div className="agent-card-actions">
+                    <label
+                      className="agent-toggle"
+                      title={agent.enabled ? "停用 Agent" : "启用 Agent"}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={agent.enabled}
+                        disabled={busy === agent.id}
+                        onChange={(event) => void toggleAgent(agent, event.target.checked)}
+                      />
+                      <span />
+                      <small>{agent.enabled ? "启用" : "停用"}</small>
+                    </label>
+                    <button className="secondary" onClick={() => openTester(agent)}>
+                      <MessageSquare size={14} />
+                      测试
+                    </button>
+                    {agent.target_page && (
+                      <button
+                        className="icon-button"
+                        title={`进入${agent.module_name}`}
+                        aria-label={`进入${agent.module_name}`}
+                        onClick={() => setPage(agent.target_page as Page)}
+                      >
+                        <ArrowUpRight size={15} />
+                      </button>
+                    )}
+                    <button
+                      className="icon-button danger-button"
+                      title="删除 Agent"
+                      aria-label={`删除 ${agent.name}`}
+                      disabled={busy === agent.id}
+                      onClick={() => void removeAgent(agent)}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button
+                  className="secondary agent-create-one"
+                  disabled={!readiness?.ready || busy === template.id}
+                  onClick={() => void createOne(template)}
+                >
+                  <Plus size={15} />
+                  创建此 Agent
+                </button>
+              )}
+            </article>
+          );
+        })}
+      </div>
+      {selectedAgent && (
+        <div className="modal-backdrop">
+          <div
+            className="modal-card agent-test-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="agent-test-title"
+          >
+            <div className="panel-head">
+              <div>
+                <span className="eyebrow">配置自检 · 建议模式</span>
+                <h3 id="agent-test-title">测试 {selectedAgent.name}</h3>
+              </div>
+              <button
+                className="icon-button"
+                aria-label="关闭"
+                onClick={() => setSelectedAgent(undefined)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="agent-test-meta">
+              <span>
+                <Bot size={14} /> {selectedAgent.model_connection_name} · {selectedAgent.model}
+              </span>
+              <span>
+                <ShieldCheck size={14} />{" "}
+                {selectedAgent.approval_policy === "human_approval"
+                  ? "高风险操作需人工审批"
+                  : "默认只读分析"}
+              </span>
+            </div>
+            {error && <div className="error-banner agent-test-error">{error}</div>}
+            <div className="agent-check-list">
+              {!testResult && (
+                <span className="loading-inline">
+                  <RefreshCw size={14} /> 正在检查配置…
+                </span>
+              )}
+              {testResult?.checks.map((check) => (
+                <div key={check.key} className={check.passed ? "passed" : "failed"}>
+                  {check.passed ? <CircleCheck size={15} /> : <CircleAlert size={15} />}
+                  <span>
+                    <b>{check.label}</b>
+                    <small>{check.detail}</small>
+                  </span>
+                </div>
+              ))}
+            </div>
+            <label className="agent-test-input">
+              测试任务
+              <textarea value={testInput} onChange={(event) => setTestInput(event.target.value)} />
+            </label>
+            <div className="agent-test-action">
+              <small>测试只调用模型生成建议，不会执行模块工具。</small>
+              <button
+                className="primary"
+                disabled={
+                  !testResult?.passed || busy === `invoke-${selectedAgent.id}` || !testInput.trim()
+                }
+                onClick={() => void invoke()}
+              >
+                <Send size={15} />
+                发送测试
+              </button>
+            </div>
+            {invokeResult && (
+              <div className="agent-test-answer">
+                <div>
+                  <b>Agent 回答</b>
+                  <span>
+                    {invokeResult.approval_required ? "建议模式 · 需审批" : "建议模式 · 只读"}
+                  </span>
+                </div>
+                <p>{invokeResult.answer}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ModelConnectionsPage({
   onboarding,
   onComplete,
   enterWorkspace,
+  openAgents,
 }: {
   onboarding: boolean;
   onComplete: () => void;
   enterWorkspace: () => void;
+  openAgents: () => void;
 }) {
   const [providers, setProviders] = useState<ModelProvider[]>([]);
   const [connections, setConnections] = useState<ModelConnection[]>([]);
@@ -2022,9 +2513,7 @@ function ModelConnectionsPage({
   useEffect(() => {
     Promise.all([api<ModelProvider[]>("/models/providers"), loadConnections()])
       .then(([items]) => setProviders(items))
-      .catch((reason) =>
-        setError(reason instanceof Error ? reason.message : "模型配置加载失败"),
-      );
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "模型配置加载失败"));
   }, []);
   useEffect(() => {
     if (onboarding) setShowForm(true);
@@ -2063,15 +2552,17 @@ function ModelConnectionsPage({
         }),
       });
       await loadConnections();
+      setShowForm(false);
+      onComplete();
       if (item.status === "ready") {
         setCompleted(true);
-        setShowForm(false);
-        onComplete();
-        setMessage(`${item.name} 已连接并设为默认模型`);
-      } else {
-        setError(
-          item.last_error || "模型连接测试未通过，请检查地址、模型 ID 和凭证",
+        setMessage(
+          item.model_source === "auto"
+            ? `${item.name} 已保存，自动识别模型 ${item.model}`
+            : `${item.name} 已连接并设为默认模型`,
         );
+      } else {
+        setMessage(`${item.name} 已保存；暂未验证可用模型，可在连接列表中重新测试`);
       }
       setForm((current) => ({ ...current, api_key: "" }));
     } catch (reason) {
@@ -2084,15 +2575,10 @@ function ModelConnectionsPage({
     setBusy(id);
     setError("");
     try {
-      const item = await api<ModelConnection>(
-        `/models/connections/${id}/test`,
-        { method: "POST" },
-      );
+      const item = await api<ModelConnection>(`/models/connections/${id}/test`, { method: "POST" });
       await loadConnections();
       setMessage(
-        item.status === "ready"
-          ? `${item.name} 连接正常`
-          : item.last_error || "连接测试失败",
+        item.status === "ready" ? `${item.name} 连接正常` : item.last_error || "连接测试失败",
       );
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "连接测试失败");
@@ -2103,10 +2589,9 @@ function ModelConnectionsPage({
   const activate = async (id: string) => {
     setBusy(id);
     try {
-      const item = await api<ModelConnection>(
-        `/models/connections/${id}/activate`,
-        { method: "POST" },
-      );
+      const item = await api<ModelConnection>(`/models/connections/${id}/activate`, {
+        method: "POST",
+      });
       await loadConnections();
       setMessage(`${item.name} 已设为默认模型`);
     } catch (reason) {
@@ -2130,18 +2615,34 @@ function ModelConnectionsPage({
       setBusy("");
     }
   };
+  const provisionAgents = async () => {
+    setBusy("provision-agents");
+    setError("");
+    try {
+      const result = await api<AgentProvisionResult>("/agents/provision", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      const detail = result.created.length
+        ? `已基于 ${result.model_connection_name} 创建 ${result.created.length} 个模块 Agent`
+        : `${result.existing.length} 个模块 Agent 已存在，无需重复创建`;
+      setMessage(detail);
+      openAgents();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Agent 创建失败");
+    } finally {
+      setBusy("");
+    }
+  };
   const selected = providers.find((item) => item.id === providerId);
-  const visibleProviders = providers.filter(
-    (item) => item.deployment === deployment,
-  );
+  const visibleProviders = providers.filter((item) => item.deployment === deployment);
+  const activeConnection = connections.find((item) => item.is_default && item.status === "ready");
   return (
     <section className="content models-page">
       <div className="section-head">
         <div>
           <span className="eyebrow">
-            {onboarding
-              ? "首次配置 · 第 1 步"
-              : "模型注册 · 连接测试 · 默认路由"}
+            {onboarding ? "首次配置 · 第 1 步" : "模型注册 · 连接测试 · 默认路由"}
           </span>
           <h1>{onboarding ? "先连接一个大模型" : "模型接入"}</h1>
           <p className="section-subtitle">
@@ -2174,12 +2675,39 @@ function ModelConnectionsPage({
           </div>
           <div>
             <b>模型连接已就绪</b>
-            <span>
-              默认模型已用于 Text2SQL 和图表推理，并可供后续 AI 任务复用。
-            </span>
+            <span>下一步可按 8 个产品模块自动装配能力、工具权限和审批策略。</span>
           </div>
-          <button className="primary" onClick={enterWorkspace}>
-            进入工作台 <ArrowRight size={16} />
+          <div className="model-complete-actions">
+            <button className="secondary" onClick={enterWorkspace}>
+              稍后处理
+            </button>
+            <button
+              className="primary"
+              disabled={busy === "provision-agents"}
+              onClick={() => void provisionAgents()}
+            >
+              {busy === "provision-agents" ? <RefreshCw size={16} /> : <WandSparkles size={16} />}
+              一键创建模块 Agent
+            </button>
+          </div>
+        </div>
+      )}
+      {!completed && !showForm && activeConnection && (
+        <div className="model-agent-next panel">
+          <span className="model-agent-next-icon">
+            <Bot size={20} />
+          </span>
+          <div>
+            <b>默认模型已就绪，继续装配模块 Agent</b>
+            <small>将为智能问数、知识库、数据治理、AIOps 等 8 个模块创建独立 Agent。</small>
+          </div>
+          <button
+            className="primary"
+            disabled={busy === "provision-agents"}
+            onClick={() => void provisionAgents()}
+          >
+            <WandSparkles size={16} />
+            一键创建
           </button>
         </div>
       )}
@@ -2209,9 +2737,7 @@ function ModelConnectionsPage({
                   className={provider.id === providerId ? "active" : ""}
                   onClick={() => chooseProvider(provider)}
                 >
-                  <span className="provider-mark">
-                    {provider.name.slice(0, 1)}
-                  </span>
+                  <span className="provider-mark">{provider.name.slice(0, 1)}</span>
                   <span>
                     <b>{provider.name}</b>
                     <small>{provider.description}</small>
@@ -2245,9 +2771,7 @@ function ModelConnectionsPage({
               <input
                 required
                 value={form.name}
-                onChange={(event) =>
-                  setForm({ ...form, name: event.target.value })
-                }
+                onChange={(event) => setForm({ ...form, name: event.target.value })}
               />
             </label>
             <label>
@@ -2255,21 +2779,21 @@ function ModelConnectionsPage({
               <input
                 required
                 value={form.base_url}
-                onChange={(event) =>
-                  setForm({ ...form, base_url: event.target.value })
-                }
+                onChange={(event) => setForm({ ...form, base_url: event.target.value })}
               />
             </label>
             <label>
-              模型 ID
+              <span className="model-field-label">
+                模型 ID <span className="optional-label">可选</span>
+              </span>
               <input
-                required
                 value={form.model}
-                onChange={(event) =>
-                  setForm({ ...form, model: event.target.value })
-                }
-                placeholder={selected?.model_placeholder || "模型 ID"}
+                onChange={(event) => setForm({ ...form, model: event.target.value })}
+                placeholder={`可留空自动识别；${selected?.model_placeholder || "也可手动输入模型 ID"}`}
               />
+              <small className="model-field-help">
+                留空时将从模型服务自动获取；无法识别也可以保存连接，但不能设为默认模型。
+              </small>
             </label>
             <label>
               API Key{" "}
@@ -2282,14 +2806,8 @@ function ModelConnectionsPage({
                 type="password"
                 required={selected?.api_key_required}
                 value={form.api_key}
-                onChange={(event) =>
-                  setForm({ ...form, api_key: event.target.value })
-                }
-                placeholder={
-                  selected?.api_key_required
-                    ? "输入服务商 API Key"
-                    : "无鉴权可留空"
-                }
+                onChange={(event) => setForm({ ...form, api_key: event.target.value })}
+                placeholder={selected?.api_key_required ? "输入服务商 API Key" : "无鉴权可留空"}
                 autoComplete="new-password"
               />
             </label>
@@ -2297,9 +2815,7 @@ function ModelConnectionsPage({
               <input
                 type="checkbox"
                 checked={form.set_default}
-                onChange={(event) =>
-                  setForm({ ...form, set_default: event.target.checked })
-                }
+                onChange={(event) => setForm({ ...form, set_default: event.target.checked })}
               />
               <span>
                 <b>设为默认模型</b>
@@ -2310,9 +2826,7 @@ function ModelConnectionsPage({
               <ShieldCheck size={16} />
               <span>
                 <b>凭证不会回显</b>
-                <small>
-                  API Key 与连接记录分离保存，页面和接口响应不返回原值。
-                </small>
+                <small>API Key 与连接记录分离保存，页面和接口响应不返回原值。</small>
               </span>
             </div>
             <div className="model-form-actions">
@@ -2328,11 +2842,7 @@ function ModelConnectionsPage({
                   稍后配置，使用规则模式
                 </button>
               )}
-              <button
-                className="primary"
-                type="submit"
-                disabled={busy === "create"}
-              >
+              <button className="primary" type="submit" disabled={busy === "create"}>
                 {busy === "create" ? (
                   <>
                     <Clock3 size={16} />
@@ -2376,24 +2886,21 @@ function ModelConnectionsPage({
                 key={item.id}
               >
                 <div className="model-card-head">
-                  <span className="provider-mark">
-                    {item.provider_name.slice(0, 1)}
-                  </span>
+                  <span className="provider-mark">{item.provider_name.slice(0, 1)}</span>
                   <div>
                     <h3>{item.name}</h3>
                     <span>
-                      {item.provider_name} ·{" "}
-                      {item.deployment === "public" ? "公有云" : "私有部署"}
+                      {item.provider_name} · {item.deployment === "public" ? "公有云" : "私有部署"}
                     </span>
                   </div>
-                  {item.is_default && (
-                    <span className="chip success">默认</span>
-                  )}
+                  {item.is_default && <span className="chip success">默认</span>}
                 </div>
                 <div className="model-card-body">
                   <span>
                     <b>模型</b>
-                    {item.model}
+                    {item.model ||
+                      (item.model_source === "gateway-default" ? "服务默认模型" : "未指定")}
+                    {item.model_source === "auto" ? "（自动识别）" : ""}
                   </span>
                   <span>
                     <b>地址</b>
@@ -2413,9 +2920,7 @@ function ModelConnectionsPage({
                     {item.has_credential ? "已配置" : "无鉴权"}
                   </span>
                 </div>
-                {item.last_error && (
-                  <div className="model-card-error">{item.last_error}</div>
-                )}
+                {item.last_error && <div className="model-card-error">{item.last_error}</div>}
                 <div className="model-card-actions">
                   <button
                     className="secondary"
@@ -2459,22 +2964,46 @@ type SettingsSection = "general" | "model" | "connectors" | "security";
 function SettingsPage({ setPage }: { setPage: (page: Page) => void }) {
   const [section, setSection] = useState<SettingsSection>("general");
   const [feedback, setFeedback] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
   const sections = [
     ["general", "基础设置", SlidersHorizontal],
     ["model", "模型网关", CloudCog],
     ["connectors", "数据连接", Cable],
     ["security", "安全策略", LockKeyhole],
   ] as const;
-  const complete = (message: string) => setFeedback(message);
+  useEffect(() => {
+    void api<WorkspaceSettings>("/settings")
+      .then(setSettings)
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "设置加载失败"));
+  }, []);
+  const update = <K extends keyof WorkspaceSettings>(key: K, value: WorkspaceSettings[K]) =>
+    setSettings((current) => (current ? { ...current, [key]: value } : current));
+  const saveSettings = async (message: string) => {
+    if (!settings) return;
+    setSaving(true);
+    setError("");
+    try {
+      const updated = await api<WorkspaceSettings>("/settings", {
+        method: "PATCH",
+        body: JSON.stringify(settings),
+      });
+      setSettings(updated);
+      setFeedback(message);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "设置保存失败");
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <section className="content settings-page">
       <div className="section-head">
         <div>
           <span className="eyebrow">工作空间 · 模型 · 连接 · 安全</span>
           <h1>系统设置</h1>
-          <p className="section-subtitle">
-            管理当前工作空间的基础配置和本地集成边界。
-          </p>
+          <p className="section-subtitle">管理当前工作空间的基础配置和本地集成边界。</p>
         </div>
         <span className="environment-badge">
           <span className="status-dot" />
@@ -2490,6 +3019,7 @@ function SettingsPage({ setPage }: { setPage: (page: Page) => void }) {
           </button>
         </div>
       )}
+      {error && <div className="error-banner">{error}</div>}
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="设置分类">
           {sections.map(([id, label, Icon]) => (
@@ -2508,30 +3038,40 @@ function SettingsPage({ setPage }: { setPage: (page: Page) => void }) {
           ))}
         </nav>
         <div className="panel settings-panel">
+          {!settings && !error && <div className="loading">正在加载设置…</div>}
           {section === "general" && (
             <>
-              <SettingsHeader
-                title="基础设置"
-                description="工作空间名称、语言和时间展示规则。"
-              />
+              <SettingsHeader title="基础设置" description="工作空间名称、语言和时间展示规则。" />
               <div className="settings-form-grid">
                 <SettingsField label="工作空间名称">
-                  <input defaultValue="本地演示空间" />
+                  <input
+                    value={settings?.workspace_name || ""}
+                    onChange={(event) => update("workspace_name", event.target.value)}
+                  />
                 </SettingsField>
                 <SettingsField label="默认语言">
-                  <select defaultValue="zh-CN">
+                  <select
+                    value={settings?.language || "zh-CN"}
+                    onChange={(event) => update("language", event.target.value)}
+                  >
                     <option value="zh-CN">简体中文</option>
                     <option value="en-US">English</option>
                   </select>
                 </SettingsField>
                 <SettingsField label="时区">
-                  <select defaultValue="Asia/Shanghai">
+                  <select
+                    value={settings?.timezone || "Asia/Shanghai"}
+                    onChange={(event) => update("timezone", event.target.value)}
+                  >
                     <option>Asia/Shanghai</option>
                     <option>UTC</option>
                   </select>
                 </SettingsField>
                 <SettingsField label="数据保留期">
-                  <select defaultValue="90">
+                  <select
+                    value={String(settings?.data_retention_days || 90)}
+                    onChange={(event) => update("data_retention_days", Number(event.target.value))}
+                  >
                     <option value="30">30 天</option>
                     <option value="90">90 天</option>
                     <option value="180">180 天</option>
@@ -2539,7 +3079,8 @@ function SettingsPage({ setPage }: { setPage: (page: Page) => void }) {
                 </SettingsField>
               </div>
               <SettingsSave
-                onClick={() => complete("基础设置已保存在当前会话")}
+                onClick={() => void saveSettings("基础设置已保存到 TiDB")}
+                busy={saving || !settings}
               />
             </>
           )}
@@ -2572,10 +3113,16 @@ function SettingsPage({ setPage }: { setPage: (page: Page) => void }) {
               />
               <div className="settings-form-grid">
                 <SettingsField label="TiDB MCP Endpoint" wide>
-                  <input defaultValue="demo://tidb" />
+                  <input
+                    value={settings?.tidb_mcp_endpoint || ""}
+                    onChange={(event) => update("tidb_mcp_endpoint", event.target.value)}
+                  />
                 </SettingsField>
                 <SettingsField label="允许读取的目录" wide>
-                  <input defaultValue="/workspace/data" />
+                  <input
+                    value={settings?.allowed_data_root || ""}
+                    onChange={(event) => update("allowed_data_root", event.target.value)}
+                  />
                 </SettingsField>
               </div>
               <div className="connector-health-row">
@@ -2587,7 +3134,8 @@ function SettingsPage({ setPage }: { setPage: (page: Page) => void }) {
                 <small>2 个 Schema</small>
               </div>
               <SettingsSave
-                onClick={() => complete("数据连接配置已保存在当前会话")}
+                onClick={() => void saveSettings("数据连接配置已保存到 TiDB")}
+                busy={saving || !settings}
               />
             </>
           )}
@@ -2603,32 +3151,49 @@ function SettingsPage({ setPage }: { setPage: (page: Page) => void }) {
                     <b>只读 SQL</b>
                     <small>阻止 INSERT、UPDATE、DELETE 与 DDL</small>
                   </span>
-                  <input type="checkbox" defaultChecked />
+                  <input
+                    type="checkbox"
+                    checked={settings?.readonly_sql || false}
+                    onChange={(event) => update("readonly_sql", event.target.checked)}
+                  />
                 </label>
                 <label>
                   <span>
                     <b>操作审计</b>
                     <small>记录人员、输入、策略结果和追踪 ID</small>
                   </span>
-                  <input type="checkbox" defaultChecked />
+                  <input
+                    type="checkbox"
+                    checked={settings?.operation_audit || false}
+                    onChange={(event) => update("operation_audit", event.target.checked)}
+                  />
                 </label>
                 <label>
                   <span>
                     <b>高风险操作审批</b>
                     <small>执行前等待具有权限的审批人确认</small>
                   </span>
-                  <input type="checkbox" defaultChecked />
+                  <input
+                    type="checkbox"
+                    checked={settings?.high_risk_approval || false}
+                    onChange={(event) => update("high_risk_approval", event.target.checked)}
+                  />
                 </label>
                 <label>
                   <span>
                     <b>仅允许本地模型</b>
                     <small>禁止数据发送至公网模型服务</small>
                   </span>
-                  <input type="checkbox" />
+                  <input
+                    type="checkbox"
+                    checked={settings?.local_models_only || false}
+                    onChange={(event) => update("local_models_only", event.target.checked)}
+                  />
                 </label>
               </div>
               <SettingsSave
-                onClick={() => complete("安全策略已保存在当前会话")}
+                onClick={() => void saveSettings("安全策略已保存到 TiDB")}
+                busy={saving || !settings}
               />
             </>
           )}
@@ -2638,13 +3203,7 @@ function SettingsPage({ setPage }: { setPage: (page: Page) => void }) {
   );
 }
 
-function SettingsHeader({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
+function SettingsHeader({ title, description }: { title: string; description: string }) {
   return (
     <div className="settings-panel-head">
       <span className="eyebrow">当前工作空间</span>
@@ -2671,104 +3230,66 @@ function SettingsField({
   );
 }
 
-function SettingsSave({ onClick }: { onClick: () => void }) {
+function SettingsSave({ onClick, busy = false }: { onClick: () => void; busy?: boolean }) {
   return (
-    <button className="primary settings-save" onClick={onClick}>
+    <button className="primary settings-save" onClick={onClick} disabled={busy}>
       <Save size={16} />
-      保存设置
+      {busy ? "保存中…" : "保存设置"}
     </button>
-  );
-}
-function Query({
-  query,
-  setQuery,
-  answer,
-  running,
-  runQuery,
-}: {
-  query: string;
-  setQuery: (v: string) => void;
-  answer: string;
-  running: boolean;
-  runQuery: () => void;
-}) {
-  return (
-    <section className="content query-page">
-      <div className="query-intro">
-        <span className="eyebrow">自然语言查询 · 已连接 12 个数据源</span>
-        <h1>把问题交给数据</h1>
-        <p>用业务语言提问，Aegis 会生成可解释的分析结果。</p>
-      </div>
-      <div className="query-box">
-        <textarea
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="例如：近 30 天各区域 GMV 趋势如何？"
-        />
-        <div className="query-actions">
-          <span>支持中文自然语言 · 结果可追溯</span>
-          <button className="primary" onClick={runQuery} disabled={running}>
-            {running ? (
-              <>
-                <Clock3 size={16} />
-                分析中…
-              </>
-            ) : (
-              <>
-                <Play size={16} />
-                开始分析
-              </>
-            )}
-          </button>
-        </div>
-      </div>
-      <div className="suggestions">
-        {["近 30 天 GMV 趋势", "订单取消率最高的品类", "本月新客留存率"].map(
-          (x) => (
-            <button onClick={() => setQuery(x)} key={x}>
-              {x}
-            </button>
-          ),
-        )}
-      </div>
-      {(answer || running) && (
-        <div className="result panel">
-          <div className="panel-head">
-            <h3>分析结果</h3>
-            <span className="chip success">已验证</span>
-          </div>
-          {running && !answer ? (
-            <div className="loading">正在检索数据资产并生成 SQL…</div>
-          ) : (
-            <>
-              <p className="answer">{answer}</p>
-              <div className="evidence">
-                <b>证据来源</b>
-                <span>orders · dwd_order_detail</span>
-                <span>查询耗时 1.8s</span>
-              </div>
-              <div className="chart">
-                <div className="bar b1" />
-                <div className="bar b2" />
-                <div className="bar b3" />
-                <div className="bar b4" />
-                <div className="bar b5" />
-              </div>
-            </>
-          )}
-        </div>
-      )}
-    </section>
   );
 }
 function Incidents({ setPage }: { setPage: (page: Page) => void }) {
   const [filter, setFilter] = useState("全部");
   const [selectedId, setSelectedId] = useState("");
   const [message, setMessage] = useState("");
-  const visibleIncidents = incidents.filter(
-    (item) => filter === "全部" || item.status === filter,
+  const [items, setItems] = useState<IncidentRecord[]>([]);
+  const [error, setError] = useState("");
+  const statusLabel = (status: string) =>
+    status === "investigating"
+      ? "处理中"
+      : status === "open"
+        ? "待处理"
+        : status === "resolved"
+          ? "已恢复"
+          : status;
+  const formatTime = (value: string) =>
+    new Date(value).toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  useEffect(() => {
+    void api<IncidentRecord[]>("/incidents")
+      .then(setItems)
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "事件加载失败"));
+  }, []);
+  const visibleIncidents = items.filter(
+    (item) => filter === "全部" || statusLabel(item.status) === filter,
   );
-  const selectedIncident = incidents.find((item) => item.id === selectedId);
+  const selectedIncident = items.find((item) => item.id === selectedId);
+  const markRead = async () => {
+    try {
+      const result = await api<{ count: number }>("/incidents/read", {
+        method: "POST",
+        body: JSON.stringify({ incident_ids: items.map((item) => item.id) }),
+      });
+      setMessage(`已标记 ${result.count} 个事件为已读`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "标记已读失败");
+    }
+  };
+  const claim = async (incidentId: string) => {
+    try {
+      const updated = await api<IncidentRecord>(`/incidents/${incidentId}/claim`, {
+        method: "POST",
+      });
+      setItems((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setMessage("已领取事件，状态进入处理中");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "领取事件失败");
+    }
+  };
   return (
     <section className="content incident-page">
       <div className="section-head">
@@ -2776,10 +3297,7 @@ function Incidents({ setPage }: { setPage: (page: Page) => void }) {
           <span className="eyebrow">实时监控 · 过去 24 小时</span>
           <h1>事件中心</h1>
         </div>
-        <button
-          className="secondary"
-          onClick={() => setMessage("当前事件已全部标记为已读")}
-        >
+        <button className="secondary" onClick={() => void markRead()}>
           <CheckCircle2 size={16} />
           标记已读
         </button>
@@ -2793,6 +3311,7 @@ function Incidents({ setPage }: { setPage: (page: Page) => void }) {
           </button>
         </div>
       )}
+      {error && <div className="error-banner">{error}</div>}
       <div className="filters">
         {["全部", "待处理", "处理中", "已恢复"].map((item) => (
           <button
@@ -2806,9 +3325,8 @@ function Incidents({ setPage }: { setPage: (page: Page) => void }) {
             {item}{" "}
             <b>
               {item === "全部"
-                ? incidents.length
-                : incidents.filter((incident) => incident.status === item)
-                    .length}
+                ? items.length
+                : items.filter((incident) => statusLabel(incident.status) === item).length}
             </b>
           </button>
         ))}
@@ -2825,32 +3343,24 @@ function Incidents({ setPage }: { setPage: (page: Page) => void }) {
               key={i.id}
               onClick={() => setSelectedId(i.id)}
             >
-              <div className={"severity " + i.severity.toLowerCase()}>
-                {i.severity}
-              </div>
+              <div className={"severity " + i.severity.toLowerCase()}>{i.severity}</div>
               <div className="row-main">
                 <b>{i.title}</b>
                 <span>
                   {i.id} · {i.service}
                 </span>
               </div>
-              <span className="chip">{i.status}</span>
-              <small>{i.time}</small>
+              <span className="chip">{statusLabel(i.status)}</span>
+              <small>{formatTime(i.started_at)}</small>
               <ChevronRight size={17} />
             </button>
           ))}
-          {!visibleIncidents.length && (
-            <div className="empty">当前筛选下没有事件</div>
-          )}
+          {!visibleIncidents.length && <div className="empty">当前筛选下没有事件</div>}
         </div>
         {selectedIncident && (
           <div className="panel incident-detail" aria-label="事件详情">
             <div className="incident-detail-head">
-              <div
-                className={
-                  "severity " + selectedIncident.severity.toLowerCase()
-                }
-              >
+              <div className={"severity " + selectedIncident.severity.toLowerCase()}>
                 {selectedIncident.severity}
               </div>
               <button
@@ -2863,24 +3373,19 @@ function Incidents({ setPage }: { setPage: (page: Page) => void }) {
             </div>
             <span className="eyebrow">{selectedIncident.id}</span>
             <h2>{selectedIncident.title}</h2>
-            <p>
-              {selectedIncident.service} 在 {selectedIncident.time}{" "}
-              触发异常，需要结合监控证据完成影响确认和根因分析。
-            </p>
+            <p>{selectedIncident.summary}</p>
             <div className="incident-facts">
               <span>
                 <b>当前状态</b>
-                {selectedIncident.status}
+                {statusLabel(selectedIncident.status)}
               </span>
               <span>
-                <b>建议动作</b>先分析证据，再决定是否执行 Runbook
+                <b>建议动作</b>
+                {selectedIncident.recommended_action}
               </span>
             </div>
             <div className="incident-detail-actions">
-              <button
-                className="secondary"
-                onClick={() => setMessage("已领取事件，状态进入处理中")}
-              >
+              <button className="secondary" onClick={() => void claim(selectedIncident.id)}>
                 领取事件
               </button>
               <button className="primary" onClick={() => setPage("scenarios")}>
@@ -2890,49 +3395,6 @@ function Incidents({ setPage }: { setPage: (page: Page) => void }) {
             </div>
           </div>
         )}
-      </div>
-    </section>
-  );
-}
-function Assets() {
-  return (
-    <section className="content">
-      <div className="section-head">
-        <div>
-          <span className="eyebrow">数据目录 · 128 个资产</span>
-          <h1>数据资产</h1>
-        </div>
-        <button className="primary">
-          <Database size={16} />
-          接入数据源
-        </button>
-      </div>
-      <div className="searchbar">
-        <Search size={18} />
-        <input placeholder="搜索表名、字段或业务描述…" />
-      </div>
-      <div className="asset-grid">
-        {assets.map((a) => (
-          <div className="asset panel" key={a.name}>
-            <div className="asset-top">
-              <div className="table-icon">
-                <Database size={18} />
-              </div>
-              <span className="chip success">质量 {a.quality}</span>
-            </div>
-            <h3>{a.name}</h3>
-            <span className="asset-type">
-              {a.type} · {a.owner}
-            </span>
-            <p>{a.desc}</p>
-            <div className="asset-foot">
-              <span>{a.rows} 行</span>
-              <button className="text-btn">
-                查看详情 <ChevronRight size={14} />
-              </button>
-            </div>
-          </div>
-        ))}
       </div>
     </section>
   );
@@ -2963,6 +3425,51 @@ function ChartView({ option }: { option?: EChartsOption }) {
   }, [option]);
   return <div className="echart" ref={ref} />;
 }
+function OperationProgress({ state }: { state: OperationProgressState }) {
+  if (state.phase === "IDLE") return null;
+  const steps: Array<[OperationPhase, string]> = [
+    ["PLANNING", "规划"],
+    ["VALIDATING", "校验"],
+    ["EXECUTING", "执行"],
+    ["COMPLETED", "完成"],
+  ];
+  const currentIndex = steps.findIndex(([phase]) => phase === state.phase);
+  return (
+    <div
+      className={`operation-progress ${state.phase.toLowerCase()}`}
+      role="status"
+      aria-live="polite"
+    >
+      <div className="operation-progress-head">
+        <span>
+          <Activity size={14} /> 查询执行进度
+        </span>
+        <b>{state.progress}%</b>
+      </div>
+      <div className="operation-progress-track">
+        <span style={{ width: `${state.progress}%` }} />
+      </div>
+      <ol>
+        {steps.map(([phase, label], index) => (
+          <li
+            key={phase}
+            className={
+              index < currentIndex || state.phase === "COMPLETED"
+                ? "done"
+                : index === currentIndex
+                  ? "current"
+                  : ""
+            }
+          >
+            <span>{index < currentIndex || state.phase === "COMPLETED" ? "✓" : index + 1}</span>
+            {label}
+          </li>
+        ))}
+      </ol>
+      <small>{state.detail}</small>
+    </div>
+  );
+}
 function QueryV2({
   initialQuestion = "",
   module,
@@ -2982,6 +3489,11 @@ function QueryV2({
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [operationProgress, setOperationProgress] = useState<OperationProgressState>({
+    phase: "IDLE",
+    detail: "",
+    progress: 0,
+  });
 
   const loadSources = async () => {
     try {
@@ -2991,9 +3503,7 @@ function QueryV2({
         const next =
           current && data.some((item) => item.id === current)
             ? current
-            : data.find((item) => item.status === "ready")?.id ||
-              data[0]?.id ||
-              "";
+            : data.find((item) => item.status === "ready")?.id || data[0]?.id || "";
         if (next) window.localStorage.setItem("chatbi-preferred-source", next);
         return next;
       });
@@ -3016,6 +3526,52 @@ function QueryV2({
     if (initialQuestion) setQuestion(initialQuestion);
   }, [initialQuestion]);
 
+  const streamOperation = (operationId: string) =>
+    new Promise<void>((resolve) => {
+      let attempts = 0;
+      let source: EventSource | undefined;
+      const connect = () => {
+        source = new EventSource(`${API_BASE}/query/operations/${operationId}/events`);
+        source.addEventListener("progress", (event) => {
+          const payload = JSON.parse((event as MessageEvent).data) as {
+            phase: OperationPhase;
+            detail: string;
+            progress: number;
+          };
+          setOperationProgress(payload);
+        });
+        source.addEventListener("completed", (event) => {
+          const payload = JSON.parse((event as MessageEvent).data) as {
+            phase: OperationPhase;
+            progress: number;
+          };
+          setOperationProgress({
+            phase: payload.phase,
+            detail: "查询结果已返回",
+            progress: payload.progress,
+          });
+          source?.close();
+          resolve();
+        });
+        source.onerror = () => {
+          source?.close();
+          if (attempts < 2) {
+            attempts += 1;
+            window.setTimeout(connect, 250 * attempts);
+          } else {
+            setOperationProgress((current) => ({
+              ...current,
+              phase: "COMPLETED",
+              detail: "已完成，实时进度通道暂时断开",
+              progress: 100,
+            }));
+            resolve();
+          }
+        };
+      };
+      connect();
+    });
+
   const run = async () => {
     if (!sourceId || !question.trim()) {
       setError("请先选择可用数据源并输入问题");
@@ -3024,14 +3580,26 @@ function QueryV2({
     setRunning(true);
     setError("");
     setMessage("");
+    setOperationProgress({ phase: "PLANNING", detail: "正在解析自然语言问题", progress: 10 });
     try {
       const data = await api<QueryResult>("/chatbi/query", {
         method: "POST",
         body: JSON.stringify({ datasource_id: sourceId, question }),
       });
+      setOperationProgress({
+        phase: "VALIDATING",
+        detail: "正在校验只读 SQL 和数据源权限",
+        progress: 45,
+      });
+      await streamOperation(data.operation_id);
       setResult(data);
       setMessage("分析完成，可检查 SQL 和证据后加入大屏");
     } catch (e) {
+      setOperationProgress({
+        phase: "FAILED",
+        detail: "执行失败，可检查错误后重试",
+        progress: 100,
+      });
       setError(e instanceof Error ? e.message : "分析失败");
     } finally {
       setRunning(false);
@@ -3067,50 +3635,18 @@ function QueryV2({
       setError(e instanceof Error ? e.message : "移除失败");
     }
   };
-  const modules: [
-    QueryModule,
-    string,
-    string,
-    React.ComponentType<{ size?: number }>,
-  ][] = [
-    ["chatbi", "ChatBI", "自然语言生成可视化", MessageSquare],
-    ["dashboard", "大屏展示", "复用已认可报表", MonitorUp],
-  ];
   return (
     <section className="content query-page chatbi-page">
       <div className="section-head">
         <div>
-          <span className="eyebrow">智能问数 · ChatBI · 大屏</span>
+          <span className="eyebrow">
+            智能问数 · {module === "dashboard" ? "大屏展示" : "ChatBI"}
+          </span>
           <h1>从问题到可复用报表</h1>
           <p className="section-subtitle">
             从统一数据源管理选择数据源，再提问和核验，认可的结果一键沉淀到大屏。
           </p>
         </div>
-      </div>
-      <div
-        className="query-module-tabs"
-        role="tablist"
-        aria-label="智能问数模块"
-      >
-        {modules.map(([id, label, description, Icon]) => (
-          <button
-            key={id}
-            className={module === id ? "active" : ""}
-            role="tab"
-            aria-selected={module === id}
-            onClick={() => {
-              onModuleChange(id);
-              setError("");
-            }}
-          >
-            {<Icon size={18} />}
-            <span>
-              <b>{label}</b>
-              <small>{description}</small>
-            </span>
-            <ChevronRight size={16} />
-          </button>
-        ))}
       </div>
       {message && (
         <div className="notice">
@@ -3122,6 +3658,7 @@ function QueryV2({
         </div>
       )}
       {error && <div className="error-banner">{error}</div>}
+      <OperationProgress state={operationProgress} />
       {module === "chatbi" && (
         <div className="chatbi-workspace">
           <div className="chatbi-conversation panel">
@@ -3136,21 +3673,12 @@ function QueryV2({
                   value={sourceId}
                   onChange={(event) => {
                     setSourceId(event.target.value);
-                    window.localStorage.setItem(
-                      "chatbi-preferred-source",
-                      event.target.value,
-                    );
+                    window.localStorage.setItem("chatbi-preferred-source", event.target.value);
                   }}
                 >
-                  {datasources.length === 0 && (
-                    <option value="">暂无可用数据源</option>
-                  )}
+                  {datasources.length === 0 && <option value="">暂无可用数据源</option>}
                   {datasources.map((item) => (
-                    <option
-                      key={item.id}
-                      value={item.id}
-                      disabled={item.status !== "ready"}
-                    >
+                    <option key={item.id} value={item.id} disabled={item.status !== "ready"}>
                       {item.name} · {item.kind.toUpperCase()}{" "}
                       {item.status !== "ready" ? "（不可用）" : ""}
                     </option>
@@ -3164,18 +3692,11 @@ function QueryV2({
               </div>
               <div>
                 <b>今天想了解什么？</b>
-                <p>
-                  我会根据所选数据源生成只读 SQL，执行后自动选择最合适的 BI
-                  展示。
-                </p>
+                <p>我会根据所选数据源生成只读 SQL，执行后自动选择最合适的 BI 展示。</p>
               </div>
             </div>
             <div className="chat-suggestions">
-              {[
-                "近 30 天 GMV 趋势",
-                "订单金额按区域汇总",
-                "不同品类的销售额占比",
-              ].map((item) => (
+              {["近 30 天 GMV 趋势", "订单金额按区域汇总", "不同品类的销售额占比"].map((item) => (
                 <button key={item} onClick={() => setQuestion(item)}>
                   {item}
                 </button>
@@ -3238,9 +3759,7 @@ function QueryV2({
             {result ? (
               <>
                 <p className="answer">{result.answer}</p>
-                {result.chart?.option && (
-                  <ChartView option={result.chart.option} />
-                )}
+                {result.chart?.option && <ChartView option={result.chart.option} />}
                 <div className="report-table-wrap">
                   <table>
                     <thead>
@@ -3302,10 +3821,7 @@ function QueryV2({
               <MonitorUp size={34} />
               <b>还没有已认可报表</b>
               <span>在 ChatBI 中核验结果后，点击“认可并加入大屏”。</span>
-              <button
-                className="secondary"
-                onClick={() => onModuleChange("chatbi")}
-              >
+              <button className="secondary" onClick={() => onModuleChange("chatbi")}>
                 <MessageSquare size={15} />
                 去生成第一张
               </button>
@@ -3329,9 +3845,7 @@ function QueryV2({
                     </button>
                   </div>
                   <p className="dashboard-question">{report.question}</p>
-                  {report.chart.option && (
-                    <ChartView option={report.chart.option} />
-                  )}
+                  {report.chart.option && <ChartView option={report.chart.option} />}
                   <div className="dashboard-card-foot">
                     <span>认可人 {report.accepted_by}</span>
                     <button
@@ -3356,6 +3870,8 @@ function QueryV2({
 }
 function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
   const [search, setSearch] = useState("");
+  const [assetItems, setAssetItems] = useState<AssetRecord[]>([]);
+  const [assetError, setAssetError] = useState("");
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [directory, setDirectory] = useState("");
   const [message, setMessage] = useState("");
@@ -3363,12 +3879,17 @@ function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
   const [datasetQuestion, setDatasetQuestion] = useState("");
   const [datasetResult, setDatasetResult] = useState<QueryResult | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
-  const [selectedAsset, setSelectedAsset] = useState<
-    (typeof assets)[number] | null
-  >(null);
+  const [selectedAsset, setSelectedAsset] = useState<AssetRecord | null>(null);
   const [assetMessage, setAssetMessage] = useState("");
-  const filtered = assets.filter((item) =>
-    (item.name + " " + item.desc).toLowerCase().includes(search.toLowerCase()),
+  useEffect(() => {
+    void api<AssetRecord[]>("/assets")
+      .then(setAssetItems)
+      .catch((reason) => setAssetError(reason instanceof Error ? reason.message : "资产加载失败"));
+  }, []);
+  const filtered = assetItems.filter((item) =>
+    (item.name + " " + item.description + " " + item.owner)
+      .toLowerCase()
+      .includes(search.toLowerCase()),
   );
   const upload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -3448,6 +3969,7 @@ function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
         </button>
       </div>
       {message && <div className="notice">{message}</div>}
+      {assetError && <div className="error-banner">{assetError}</div>}
       <div className="searchbar">
         <Search size={18} />
         <input
@@ -3463,15 +3985,17 @@ function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
               <div className="table-icon">
                 <Database size={18} />
               </div>
-              <span className="chip success">质量 {a.quality}</span>
+              <span className="chip success">质量 {a.quality_score ?? "-"}</span>
             </div>
             <h3>{a.name}</h3>
             <span className="asset-type">
               {a.type} · {a.owner}
             </span>
-            <p>{a.desc}</p>
+            <p>{a.description}</p>
             <div className="asset-foot">
-              <span>{a.rows} 行</span>
+              <span>
+                {a.row_count == null ? "指标" : `${a.row_count.toLocaleString("en-US")} 行`}
+              </span>
               <button
                 className="text-btn"
                 onClick={() => {
@@ -3505,7 +4029,7 @@ function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
               <X size={16} />
             </button>
           </div>
-          <p>{selectedAsset.desc}</p>
+          <p>{selectedAsset.description}</p>
           {assetMessage && (
             <div className="inline-success">
               <CheckCircle2 size={14} />
@@ -3515,11 +4039,13 @@ function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
           <div className="asset-detail-facts">
             <span>
               <b>数据规模</b>
-              {selectedAsset.rows} 行
+              {selectedAsset.row_count == null
+                ? "指标"
+                : `${selectedAsset.row_count.toLocaleString("en-US")} 行`}
             </span>
             <span>
               <b>质量评分</b>
-              {selectedAsset.quality}
+              {selectedAsset.quality_score ?? "-"}
             </span>
             <span>
               <b>责任团队</b>
@@ -3533,7 +4059,20 @@ function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
             </button>
             <button
               className="primary"
-              onClick={() => setAssetMessage("已创建该资产的治理任务草稿")}
+              onClick={() => {
+                void api(`/assets/${selectedAsset.id}/governance-tasks`, {
+                  method: "POST",
+                  body: JSON.stringify({
+                    asset_id: selectedAsset.id,
+                    title: `${selectedAsset.name}治理检查`,
+                    description: "由数据资产页创建的治理任务草稿",
+                  }),
+                })
+                  .then(() => setAssetMessage("已创建该资产的治理任务草稿"))
+                  .catch((reason) =>
+                    setAssetError(reason instanceof Error ? reason.message : "治理任务创建失败"),
+                  );
+              }}
             >
               <ListChecks size={15} />
               创建治理任务
@@ -3554,8 +4093,7 @@ function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
                 <div className="row-main">
                   <b>{item.name}</b>
                   <span>
-                    {item.kind.toUpperCase()} · {item.rows} 行 ·{" "}
-                    {item.columns.length} 列
+                    {item.kind.toUpperCase()} · {item.rows} 行 · {item.columns.length} 列
                   </span>
                 </div>
                 <span className="chip">{item.id}</span>
@@ -3584,11 +4122,7 @@ function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
                 onChange={(e) => setDatasetQuestion(e.target.value)}
                 placeholder="例如：按天汇总金额并展示趋势"
               />
-              <button
-                className="primary"
-                onClick={analyze}
-                disabled={analyzing}
-              >
+              <button className="primary" onClick={analyze} disabled={analyzing}>
                 {analyzing ? (
                   <>
                     <Clock3 size={16} />
@@ -3605,9 +4139,7 @@ function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
             {datasetResult && (
               <>
                 <p className="answer">{datasetResult.answer}</p>
-                {datasetResult.chart?.option && (
-                  <ChartView option={datasetResult.chart.option} />
-                )}
+                {datasetResult.chart?.option && <ChartView option={datasetResult.chart.option} />}
                 <div className="result-grid">
                   <div>
                     <b>执行 SQL</b>
@@ -3699,9 +4231,7 @@ function RelationshipNetwork({
             dataType: node.data_type,
             category: node.kind === "table" ? 0 : 1,
             symbolSize:
-              node.kind === "table"
-                ? 34 + Math.min(relationCount.get(node.id) || 0, 6) * 2
-                : 13,
+              node.kind === "table" ? 34 + Math.min(relationCount.get(node.id) || 0, 6) * 2 : 13,
             label: {
               show: node.kind === "table",
               formatter: node.label,
@@ -3725,9 +4255,7 @@ function RelationshipNetwork({
                     ? "#27845c"
                     : "#cbd5e1",
               width:
-                edge.level === "structure"
-                  ? 1
-                  : 1.5 + Math.min(edge.observation_count, 6) * 0.25,
+                edge.level === "structure" ? 1 : 1.5 + Math.min(edge.observation_count, 6) * 0.25,
               opacity: edge.level === "structure" ? 0.38 : 0.82,
               curveness: 0.08,
             },
@@ -3749,16 +4277,13 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
   const [sources, setSources] = useState<DataSourceRecord[]>([]);
   const [sourceId, setSourceId] = useState("");
   const [snapshot, setSnapshot] = useState<RelationshipSnapshot | null>(null);
-  const [activeTab, setActiveTab] = useState<"graph" | "metadata" | "sql">(
-    "graph",
-  );
+  const [activeTab, setActiveTab] = useState<"graph" | "metadata" | "sql">("graph");
   const [graphLevel, setGraphLevel] = useState<"table" | "field">("table");
   const [sqlInput, setSqlInput] = useState(
     "SELECT o.order_id, c.region\nFROM sales.orders o\nJOIN sales.customers c ON c.customer_id = o.customer_id;",
   );
   const [autoCollect, setAutoCollect] = useState(false);
-  const [collectorStatus, setCollectorStatus] =
-    useState<SqlCollectorStatus | null>(null);
+  const [collectorStatus, setCollectorStatus] = useState<SqlCollectorStatus | null>(null);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -3769,10 +4294,9 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
     setBusy("metadata");
     setError("");
     try {
-      const data = await api<RelationshipSnapshot>(
-        `/data-relationships/${id}/collect`,
-        { method: "POST" },
-      );
+      const data = await api<RelationshipSnapshot>(`/data-relationships/${id}/collect`, {
+        method: "POST",
+      });
       setSnapshot(data);
       setMessage(
         `已采集 ${data.schemas.length} 个 Schema、${data.nodes.filter((node) => node.kind === "table").length} 张表`,
@@ -3788,13 +4312,11 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
     if (!silent) setBusy("sql-collect");
     setError("");
     try {
-      const data = await api<RelationshipSnapshot>(
-        `/data-relationships/${sourceId}/collect-sql`,
-        { method: "POST" },
-      );
+      const data = await api<RelationshipSnapshot>(`/data-relationships/${sourceId}/collect-sql`, {
+        method: "POST",
+      });
       setSnapshot(data);
-      if (!silent)
-        setMessage(`已更新 ${data.sql_observations.length} 条关联 SQL 摘要`);
+      if (!silent) setMessage(`已更新 ${data.sql_observations.length} 条关联 SQL 摘要`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "关联 SQL 采集失败");
       setAutoCollect(false);
@@ -3811,9 +4333,7 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
         method: "POST",
         body: JSON.stringify({ sql: sqlInput, source: "manual" }),
       });
-      const data = await api<RelationshipSnapshot>(
-        `/data-relationships/${sourceId}`,
-      );
+      const data = await api<RelationshipSnapshot>(`/data-relationships/${sourceId}`);
       setSnapshot(data);
       setMessage("SQL 已解析，表级和字段级关系已更新");
       setActiveTab("graph");
@@ -3841,14 +4361,10 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
         setError(`持续采集最近失败：${status.last_error}`);
       }
       setMessage(
-        status.enabled
-          ? "服务端持续采集已启动，关闭页面后仍会运行"
-          : "服务端持续采集已停止",
+        status.enabled ? "服务端持续采集已启动，关闭页面后仍会运行" : "服务端持续采集已停止",
       );
       if (status.enabled) {
-        const data = await api<RelationshipSnapshot>(
-          `/data-relationships/${sourceId}`,
-        );
+        const data = await api<RelationshipSnapshot>(`/data-relationships/${sourceId}`);
         setSnapshot(data);
       }
     } catch (reason) {
@@ -3862,9 +4378,7 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
   useEffect(() => {
     api<DataSourceRecord[]>("/chatbi/datasources")
       .then((items) => {
-        const databaseSources = items.filter((item) =>
-          ["tidb", "mysql"].includes(item.kind),
-        );
+        const databaseSources = items.filter((item) => ["tidb", "mysql"].includes(item.kind));
         setSources(databaseSources);
         setSourceId(
           databaseSources.find((item) => item.status === "ready")?.id ||
@@ -3872,9 +4386,7 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
             "",
         );
       })
-      .catch((reason) =>
-        setError(reason instanceof Error ? reason.message : "数据源加载失败"),
-      );
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "数据源加载失败"));
   }, []);
   useEffect(() => {
     if (!sourceId) {
@@ -3890,16 +4402,12 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
         setAutoCollect(status.enabled);
       })
       .catch((reason) =>
-        setError(
-          reason instanceof Error ? reason.message : "持续采集状态加载失败",
-        ),
+        setError(reason instanceof Error ? reason.message : "持续采集状态加载失败"),
       );
   }, [sourceId]);
 
-  const tableCount =
-    snapshot?.nodes.filter((node) => node.kind === "table").length || 0;
-  const relationCount =
-    snapshot?.edges.filter((edge) => edge.level !== "structure").length || 0;
+  const tableCount = snapshot?.nodes.filter((node) => node.kind === "table").length || 0;
+  const relationCount = snapshot?.edges.filter((edge) => edge.level !== "structure").length || 0;
   const sqlCount = snapshot?.sql_observations.length || 0;
 
   return (
@@ -3915,11 +4423,7 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
         <div className="relationship-head-actions">
           <button
             className="secondary"
-            disabled={
-              !sourceId ||
-              selectedSource?.kind !== "tidb" ||
-              busy === "sql-collect"
-            }
+            disabled={!sourceId || selectedSource?.kind !== "tidb" || busy === "sql-collect"}
             onClick={() => void collectSql()}
           >
             <Link2 size={15} />
@@ -3948,10 +4452,7 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
       <div className="relationship-sourcebar panel">
         <label>
           <span>数据源</span>
-          <select
-            value={sourceId}
-            onChange={(event) => setSourceId(event.target.value)}
-          >
+          <select value={sourceId} onChange={(event) => setSourceId(event.target.value)}>
             {sources.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name} · {item.kind.toUpperCase()} · {item.status}
@@ -3974,14 +4475,8 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
           <input
             type="checkbox"
             checked={autoCollect}
-            disabled={
-              !sourceId ||
-              selectedSource?.kind !== "tidb" ||
-              busy === "collector"
-            }
-            onChange={(event) =>
-              void configureAutoCollect(event.target.checked)
-            }
+            disabled={!sourceId || selectedSource?.kind !== "tidb" || busy === "collector"}
+            onChange={(event) => void configureAutoCollect(event.target.checked)}
           />
           <span>
             <b>持续采集 SQL</b>
@@ -4032,11 +4527,7 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
           </span>
         </div>
       </div>
-      <div
-        className="relationship-tabs"
-        role="tablist"
-        aria-label="数据关系视图"
-      >
+      <div className="relationship-tabs" role="tablist" aria-label="数据关系视图">
         <button
           className={activeTab === "graph" ? "active" : ""}
           onClick={() => setActiveTab("graph")}
@@ -4051,10 +4542,7 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
           <Database size={16} />
           元数据目录
         </button>
-        <button
-          className={activeTab === "sql" ? "active" : ""}
-          onClick={() => setActiveTab("sql")}
-        >
+        <button className={activeTab === "sql" ? "active" : ""} onClick={() => setActiveTab("sql")}>
           <FileCode2 size={16} />
           SQL 采集
         </button>
@@ -4070,12 +4558,8 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
           <div className="relationship-network panel">
             <div className="panel-head">
               <div>
-                <span className="eyebrow">
-                  力导向网络 · 滚轮缩放 · 拖拽节点
-                </span>
-                <h3>
-                  {graphLevel === "table" ? "表与表关系" : "字段与字段关系"}
-                </h3>
+                <span className="eyebrow">力导向网络 · 滚轮缩放 · 拖拽节点</span>
+                <h3>{graphLevel === "table" ? "表与表关系" : "字段与字段关系"}</h3>
               </div>
               <div className="segmented">
                 <button
@@ -4208,15 +4692,11 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
                   <div>
                     <span className="chip">{item.source}</span>
                     <small>
-                      {item.execution_count} 次 · {item.relationship_ids.length}{" "}
-                      条关系
+                      {item.execution_count} 次 · {item.relationship_ids.length} 条关系
                     </small>
                   </div>
                   <code>{item.sql_preview}</code>
-                  <small>
-                    最近发现{" "}
-                    {new Date(item.last_seen_at).toLocaleString("zh-CN")}
-                  </small>
+                  <small>最近发现 {new Date(item.last_seen_at).toLocaleString("zh-CN")}</small>
                 </article>
               ))
             ) : (
@@ -4230,11 +4710,15 @@ function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
 }
 function KnowledgeBasePage() {
   const [libraries, setLibraries] = useState<KnowledgeBaseRecord[]>([]);
+  const [indexModes, setIndexModes] = useState<KnowledgeIndexMode[]>([]);
+  const [chunkingModes, setChunkingModes] = useState<KnowledgeChunkingMode[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
-  const [question, setQuestion] = useState(
-    "TiDB 巡检发现慢 SQL 时应该如何处理？",
-  );
+  const [question, setQuestion] = useState("TiDB 巡检发现慢 SQL 时应该如何处理？");
+  const [queryTags, setQueryTags] = useState("");
+  const [topK, setTopK] = useState("5");
+  const [scoreThreshold, setScoreThreshold] = useState("0.20");
+  const [generateAnswer, setGenerateAnswer] = useState(true);
   const [result, setResult] = useState<KnowledgeQueryResult | null>(null);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -4242,20 +4726,25 @@ function KnowledgeBasePage() {
   const [directory, setDirectory] = useState("");
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
+  const [newChunkSize, setNewChunkSize] = useState("800");
+  const [newChunkOverlap, setNewChunkOverlap] = useState("120");
+  const [newIndexMode, setNewIndexMode] = useState<KnowledgeIndexMode["id"]>("hybrid");
+  const [newChunkingMode, setNewChunkingMode] = useState<KnowledgeChunkingMode["id"]>("recursive");
   const [showCreate, setShowCreate] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<
-    "ask" | "documents" | "retrieval" | "settings"
-  >("ask");
+  const [message, setMessage] = useState("");
+  const [activeTab, setActiveTab] = useState<"ask" | "documents" | "retrieval">("ask");
   const [queries, setQueries] = useState<KnowledgeQueryResult[]>([]);
   const [selectedDocumentId, setSelectedDocumentId] = useState("");
   const [chunks, setChunks] = useState<KnowledgeChunk[]>([]);
-  const [feedback, setFeedback] = useState<"helpful" | "not-helpful" | "idle">(
-    "idle",
-  );
-  const selected =
-    libraries.find((item) => item.id === selectedId) || libraries[0];
+  const [feedback, setFeedback] = useState<"helpful" | "not-helpful" | "idle">("idle");
+  const [editChunkSize, setEditChunkSize] = useState("800");
+  const [editChunkOverlap, setEditChunkOverlap] = useState("120");
+  const [editIndexMode, setEditIndexMode] = useState<KnowledgeIndexMode["id"]>("hybrid");
+  const [editChunkingMode, setEditChunkingMode] =
+    useState<KnowledgeChunkingMode["id"]>("recursive");
+  const selected = libraries.find((item) => item.id === selectedId) || libraries[0];
 
   const loadLibraries = async (preferredId?: string) => {
     try {
@@ -4268,11 +4757,7 @@ function KnowledgeBasePage() {
   };
   const loadDocuments = async (knowledgeBaseId: string) => {
     try {
-      setDocuments(
-        await api<KnowledgeDocument[]>(
-          `/knowledge-bases/${knowledgeBaseId}/documents`,
-        ),
-      );
+      setDocuments(await api<KnowledgeDocument[]>(`/knowledge-bases/${knowledgeBaseId}/documents`));
     } catch (e) {
       setError(e instanceof Error ? e.message : "文档列表加载失败");
     }
@@ -4292,11 +4777,7 @@ function KnowledgeBasePage() {
     try {
       setChunks(
         await api<KnowledgeChunk[]>(
-          "/knowledge-bases/" +
-            knowledgeBaseId +
-            "/documents/" +
-            documentId +
-            "/chunks",
+          "/knowledge-bases/" + knowledgeBaseId + "/documents/" + documentId + "/chunks",
         ),
       );
     } catch (e) {
@@ -4305,6 +4786,12 @@ function KnowledgeBasePage() {
   };
   useEffect(() => {
     void loadLibraries();
+    api<KnowledgeIndexMode[]>("/knowledge-bases/index-modes")
+      .then(setIndexModes)
+      .catch((e) => setError(e instanceof Error ? e.message : "索引模式加载失败"));
+    api<KnowledgeChunkingMode[]>("/knowledge-bases/chunking-modes")
+      .then(setChunkingModes)
+      .catch((e) => setError(e instanceof Error ? e.message : "分块模式加载失败"));
   }, []);
   useEffect(() => {
     if (selectedId) {
@@ -4314,6 +4801,10 @@ function KnowledgeBasePage() {
       setSelectedDocumentId("");
       setChunks([]);
       setFeedback("idle");
+      setEditChunkSize(String(selected?.chunk_size || 800));
+      setEditChunkOverlap(String(selected?.chunk_overlap || 120));
+      setEditIndexMode(selected?.retrieval_strategy || "hybrid");
+      setEditChunkingMode(selected?.chunking_strategy || "recursive");
     }
   }, [selectedId]);
   const refresh = async () => {
@@ -4333,14 +4824,51 @@ function KnowledgeBasePage() {
         body: JSON.stringify({
           name: newName.trim(),
           description: newDescription.trim(),
+          chunk_size: Number(newChunkSize),
+          chunk_overlap: Number(newChunkOverlap),
+          retrieval_strategy: newIndexMode,
+          chunking_strategy: newChunkingMode,
         }),
       });
       setNewName("");
       setNewDescription("");
+      setNewChunkSize("800");
+      setNewChunkOverlap("120");
+      setNewIndexMode("hybrid");
+      setNewChunkingMode("recursive");
       setShowCreate(false);
       await loadLibraries(item.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "创建知识库失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const saveSettings = async () => {
+    if (!selected) return;
+    setBusy("settings");
+    setError("");
+    setMessage("");
+    try {
+      const updated = await api<KnowledgeBaseRecord>(`/knowledge-bases/${selected.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          chunk_size: Number(editChunkSize),
+          chunk_overlap: Number(editChunkOverlap),
+          retrieval_strategy: editIndexMode,
+          chunking_strategy: editChunkingMode,
+        }),
+      });
+      setLibraries((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+      setMessage(
+        Number(editChunkSize) !== selected.chunk_size ||
+          Number(editChunkOverlap) !== selected.chunk_overlap ||
+          editChunkingMode !== selected.chunking_strategy
+          ? `配置已保存，已重新生成 ${updated.chunk_count} 个检索片段`
+          : "索引配置已保存",
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "索引配置保存失败");
     } finally {
       setBusy("");
     }
@@ -4350,20 +4878,17 @@ function KnowledgeBasePage() {
     setBusy("text");
     setError("");
     try {
-      await api<KnowledgeDocument>(
-        `/knowledge-bases/${selected.id}/documents`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            title: title.trim(),
-            content,
-            tags: tags
-              .split(",")
-              .map((item) => item.trim())
-              .filter(Boolean),
-          }),
-        },
-      );
+      await api<KnowledgeDocument>(`/knowledge-bases/${selected.id}/documents`, {
+        method: "POST",
+        body: JSON.stringify({
+          title: title.trim(),
+          content,
+          tags: tags
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean),
+        }),
+      });
       setTitle("");
       setContent("");
       setTags("");
@@ -4374,24 +4899,17 @@ function KnowledgeBasePage() {
       setBusy("");
     }
   };
-  const uploadDocuments = async (
-    event: React.ChangeEvent<HTMLInputElement>,
-  ) => {
+  const uploadDocuments = async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (!selected || !event.target.files?.length) return;
     setBusy("upload");
     setError("");
     try {
       const form = new FormData();
-      Array.from(event.target.files).forEach((file) =>
-        form.append("files", file),
-      );
-      await api<KnowledgeDocument[]>(
-        `/knowledge-bases/${selected.id}/documents/upload`,
-        {
-          method: "POST",
-          body: form,
-        },
-      );
+      Array.from(event.target.files).forEach((file) => form.append("files", file));
+      await api<KnowledgeDocument[]>(`/knowledge-bases/${selected.id}/documents/upload`, {
+        method: "POST",
+        body: form,
+      });
       event.target.value = "";
       await refresh();
     } catch (e) {
@@ -4405,23 +4923,83 @@ function KnowledgeBasePage() {
     setBusy("directory");
     setError("");
     try {
-      await api<KnowledgeDocument[]>(
-        `/knowledge-bases/${selected.id}/documents/local-directory`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            path: directory.trim(),
-            tags: tags
-              .split(",")
-              .map((item) => item.trim())
-              .filter(Boolean),
-          }),
-        },
-      );
+      await api<KnowledgeDocument[]>(`/knowledge-bases/${selected.id}/documents/local-directory`, {
+        method: "POST",
+        body: JSON.stringify({
+          path: directory.trim(),
+          tags: tags
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean),
+        }),
+      });
       setDirectory("");
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "目录扫描失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const toggleDocument = async (document: KnowledgeDocument) => {
+    if (!selected) return;
+    setBusy(`toggle-${document.id}`);
+    setError("");
+    try {
+      const updated = await api<KnowledgeDocument>(
+        `/knowledge-bases/${selected.id}/documents/${document.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ enabled: !document.enabled }),
+        },
+      );
+      setDocuments((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+      setMessage(updated.enabled ? "文档已参与检索" : "文档已暂停检索");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "文档状态更新失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const reindexDocument = async (document: KnowledgeDocument) => {
+    if (!selected) return;
+    setBusy(`reindex-${document.id}`);
+    setError("");
+    try {
+      const updated = await api<KnowledgeDocument>(
+        `/knowledge-bases/${selected.id}/documents/${document.id}/reindex`,
+        { method: "POST" },
+      );
+      setDocuments((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+      await loadLibraries(selected.id);
+      if (selectedDocumentId === document.id) {
+        await loadChunks(selected.id, document.id);
+      }
+      setMessage(`“${document.title}”已重新生成 ${updated.chunk_count} 个片段`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "重新索引失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const removeDocument = async (document: KnowledgeDocument) => {
+    if (!selected || !window.confirm(`确认删除“${document.title}”及其全部检索片段？`)) {
+      return;
+    }
+    setBusy(`delete-${document.id}`);
+    setError("");
+    try {
+      await api<{ deleted: boolean }>(`/knowledge-bases/${selected.id}/documents/${document.id}`, {
+        method: "DELETE",
+      });
+      if (selectedDocumentId === document.id) {
+        setSelectedDocumentId("");
+        setChunks([]);
+      }
+      await refresh();
+      setMessage("文档及其检索片段已删除");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "文档删除失败");
     } finally {
       setBusy("");
     }
@@ -4431,13 +5009,19 @@ function KnowledgeBasePage() {
     setBusy("query");
     setError("");
     try {
-      const nextResult = await api<KnowledgeQueryResult>(
-        `/knowledge-bases/${selected.id}/query`,
-        {
-          method: "POST",
-          body: JSON.stringify({ question: question.trim(), top_k: 5 }),
-        },
-      );
+      const nextResult = await api<KnowledgeQueryResult>(`/knowledge-bases/${selected.id}/query`, {
+        method: "POST",
+        body: JSON.stringify({
+          question: question.trim(),
+          top_k: Number(topK),
+          tags: queryTags
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean),
+          generate_answer: activeTab === "ask" && generateAnswer,
+          score_threshold: Number(scoreThreshold),
+        }),
+      });
       setResult(nextResult);
       setFeedback("idle");
       await loadQueries(selected.id);
@@ -4452,11 +5036,7 @@ function KnowledgeBasePage() {
     setBusy("feedback");
     try {
       await api<KnowledgeFeedback>(
-        "/knowledge-bases/" +
-          selected.id +
-          "/queries/" +
-          result.query_id +
-          "/feedback",
+        "/knowledge-bases/" + selected.id + "/queries/" + result.query_id + "/feedback",
         {
           method: "POST",
           body: JSON.stringify({ helpful }),
@@ -4485,11 +5065,7 @@ function KnowledgeBasePage() {
             把企业规范、运维手册和项目资料沉淀为可检索、可核验的工作上下文。
           </p>
         </div>
-        <button
-          className="secondary"
-          onClick={() => void refresh()}
-          disabled={Boolean(busy)}
-        >
+        <button className="secondary" onClick={() => void refresh()} disabled={Boolean(busy)}>
           <RefreshCw size={15} /> 刷新
         </button>
       </div>
@@ -4497,6 +5073,15 @@ function KnowledgeBasePage() {
         <div className="error-banner">
           {error}
           <button onClick={() => setError("")}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
+      {message && (
+        <div className="notice knowledge-notice">
+          <CheckCircle2 size={15} />
+          {message}
+          <button onClick={() => setMessage("")} aria-label="关闭提示">
             <X size={14} />
           </button>
         </div>
@@ -4527,6 +5112,58 @@ function KnowledgeBasePage() {
                 onChange={(event) => setNewDescription(event.target.value)}
                 placeholder="用途描述（可选）"
               />
+              <label>
+                <span>分块大小</span>
+                <input
+                  type="number"
+                  min={200}
+                  max={4000}
+                  value={newChunkSize}
+                  onChange={(event) => setNewChunkSize(event.target.value)}
+                />
+              </label>
+              <label>
+                <span>相邻重叠</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={1000}
+                  value={newChunkOverlap}
+                  onChange={(event) => setNewChunkOverlap(event.target.value)}
+                />
+              </label>
+              <label>
+                <span>分块模式</span>
+                <select
+                  value={newChunkingMode}
+                  onChange={(event) =>
+                    setNewChunkingMode(event.target.value as KnowledgeChunkingMode["id"])
+                  }
+                >
+                  {chunkingModes.map((mode) => (
+                    <option key={mode.id} value={mode.id}>
+                      {mode.name}
+                      {mode.recommended ? "（推荐）" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>索引模式</span>
+                <select
+                  value={newIndexMode}
+                  onChange={(event) =>
+                    setNewIndexMode(event.target.value as KnowledgeIndexMode["id"])
+                  }
+                >
+                  {indexModes.map((mode) => (
+                    <option key={mode.id} value={mode.id}>
+                      {mode.name}
+                      {mode.recommended ? "（推荐）" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <button
                 className="primary"
                 onClick={() => void createLibrary()}
@@ -4564,55 +5201,156 @@ function KnowledgeBasePage() {
         <div className="knowledge-main">
           {selected ? (
             <>
-              <div className="knowledge-stats">
-                <Metric
-                  label="文档数"
-                  value={String(selected.document_count)}
-                  hint="已完成索引"
-                  tone="blue"
-                />
-                <Metric
-                  label="检索片段"
-                  value={String(selected.chunk_count)}
-                  hint={selected.retrieval_strategy}
-                  tone="purple"
-                />
-                <Metric
-                  label="分块大小"
-                  value={`${selected.chunk_size}`}
-                  hint={`重叠 ${selected.chunk_overlap}`}
-                  tone="green"
-                />
-                <Metric
-                  label="索引模式"
-                  value="本地"
-                  hint={selected.embedding_provider}
-                  tone="red"
-                />
-              </div>
-              <div
-                className="knowledge-tabs"
-                role="tablist"
-                aria-label="知识库任务"
-              >
-                {(
-                  [
-                    ["ask", "问知识库", MessageSquare],
-                    ["documents", "文档管理", FileText],
-                    ["retrieval", "检索测试", Search],
-                    ["settings", "配置", Settings],
-                  ] as const
-                ).map(([id, label, Icon]) => (
-                  <button
-                    key={id}
-                    role="tab"
-                    aria-selected={activeTab === id}
-                    className={activeTab === id ? "active" : ""}
-                    onClick={() => setActiveTab(id)}
+              <div className="panel knowledge-overview">
+                <div className="panel-head">
+                  <div>
+                    <span className="eyebrow">当前知识库</span>
+                    <h3>{selected.name}</h3>
+                  </div>
+                  <span className="chip success">
+                    {selected.scope === "workspace" ? "当前工作区" : selected.scope}
+                  </span>
+                </div>
+                <div className="knowledge-overview-row">
+                  <span className="knowledge-overview-icon blue">
+                    <FileText size={16} />
+                  </span>
+                  <span>
+                    <b>文档数</b>
+                    <small>已完成入库的资料</small>
+                  </span>
+                  <strong>{selected.document_count}</strong>
+                </div>
+                <div className="knowledge-overview-row">
+                  <span className="knowledge-overview-icon purple">
+                    <ListChecks size={16} />
+                  </span>
+                  <span>
+                    <b>检索片段</b>
+                    <small>当前配置生成的 Chunk 数量</small>
+                  </span>
+                  <strong>{selected.chunk_count}</strong>
+                </div>
+                <div className="knowledge-overview-row editable">
+                  <span className="knowledge-overview-icon green">
+                    <SlidersHorizontal size={16} />
+                  </span>
+                  <span>
+                    <b>分块大小</b>
+                    <small>单个片段最大字符数；修改后会重建当前知识库</small>
+                  </span>
+                  <input
+                    aria-label="分块大小"
+                    type="number"
+                    min={200}
+                    max={4000}
+                    value={editChunkSize}
+                    onChange={(event) => setEditChunkSize(event.target.value)}
+                  />
+                  <small className="knowledge-unit">字符</small>
+                </div>
+                <div className="knowledge-overview-row editable">
+                  <span className="knowledge-overview-icon green">
+                    <Link2 size={16} />
+                  </span>
+                  <span>
+                    <b>相邻重叠</b>
+                    <small>相邻片段保留的上下文长度</small>
+                  </span>
+                  <input
+                    aria-label="相邻重叠"
+                    type="number"
+                    min={0}
+                    max={1000}
+                    value={editChunkOverlap}
+                    onChange={(event) => setEditChunkOverlap(event.target.value)}
+                  />
+                  <small className="knowledge-unit">字符</small>
+                </div>
+                <div className="knowledge-overview-row editable index-mode-row">
+                  <span className="knowledge-overview-icon blue">
+                    <FileCode2 size={16} />
+                  </span>
+                  <span>
+                    <b>分块模式</b>
+                    <small>
+                      {chunkingModes.find((mode) => mode.id === editChunkingMode)?.description ||
+                        "选择文档分块方式"}
+                    </small>
+                  </span>
+                  <select
+                    aria-label="分块模式"
+                    value={editChunkingMode}
+                    onChange={(event) =>
+                      setEditChunkingMode(event.target.value as KnowledgeChunkingMode["id"])
+                    }
                   >
-                    <Icon size={15} /> {label}
+                    {chunkingModes.map((mode) => (
+                      <option key={mode.id} value={mode.id}>
+                        {mode.name}
+                        {mode.recommended ? "（推荐）" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="knowledge-overview-row editable index-mode-row">
+                  <span className="knowledge-overview-icon red">
+                    <Network size={16} />
+                  </span>
+                  <span>
+                    <b>索引模式</b>
+                    <small>
+                      {indexModes.find((mode) => mode.id === editIndexMode)?.description ||
+                        "选择检索策略"}
+                    </small>
+                  </span>
+                  <select
+                    aria-label="索引模式"
+                    value={editIndexMode}
+                    onChange={(event) =>
+                      setEditIndexMode(event.target.value as KnowledgeIndexMode["id"])
+                    }
+                  >
+                    {indexModes.map((mode) => (
+                      <option key={mode.id} value={mode.id}>
+                        {mode.name}
+                        {mode.recommended ? "（推荐）" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="knowledge-overview-actions">
+                  <span>
+                    当前提供方：{selected.embedding_provider} · 分块器：{selected.splitter_provider}
+                  </span>
+                  <button
+                    className="primary"
+                    disabled={busy === "settings"}
+                    onClick={() => void saveSettings()}
+                  >
+                    <Save size={15} /> {busy === "settings" ? "保存并重建中..." : "保存索引配置"}
                   </button>
-                ))}
+                </div>
+              </div>
+              <div className="knowledge-task-picker panel">
+                <label>
+                  <span>当前任务</span>
+                  <select
+                    value={activeTab}
+                    onChange={(event) => setActiveTab(event.target.value as typeof activeTab)}
+                  >
+                    <option value="ask">问知识库</option>
+                    <option value="documents">文档管理与分块预览</option>
+                    <option value="retrieval">检索测试与历史</option>
+                  </select>
+                </label>
+                <small>
+                  {activeTab === "ask"
+                    ? "基于当前索引模式回答并返回引用"
+                    : activeTab === "documents"
+                      ? "添加资料、查看文档和检查 Chunk"
+                      : "验证关键词、字符语义或混合召回效果"}
+                </small>
               </div>
               {activeTab === "ask" && (
                 <div className="knowledge-scenarios">
@@ -4635,11 +5373,7 @@ function KnowledgeBasePage() {
                   <div className="panel-head">
                     <div>
                       <h3>
-                        {activeTab === "ask" ? (
-                          <MessageSquare size={16} />
-                        ) : (
-                          <Search size={16} />
-                        )}{" "}
+                        {activeTab === "ask" ? <MessageSquare size={16} /> : <Search size={16} />}{" "}
                         {activeTab === "ask" ? "问知识库" : "检索测试"}
                       </h3>
                       <span className="panel-help">{selected.name}</span>
@@ -4653,8 +5387,56 @@ function KnowledgeBasePage() {
                     onChange={(event) => setQuestion(event.target.value)}
                     placeholder="输入关于制度、数据或运维资料的问题..."
                   />
+                  <div className="knowledge-query-controls">
+                    <label>
+                      <span>标签过滤</span>
+                      <input
+                        value={queryTags}
+                        onChange={(event) => setQueryTags(event.target.value)}
+                        placeholder="可选，如 TiDB, SQL"
+                      />
+                    </label>
+                    <label>
+                      <span>返回片段</span>
+                      <select value={topK} onChange={(event) => setTopK(event.target.value)}>
+                        {[3, 5, 8, 10].map((value) => (
+                          <option key={value} value={value}>
+                            Top {value}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="knowledge-threshold-control">
+                      <span>
+                        相似度阈值 <output>{Number(scoreThreshold).toFixed(2)}</output>
+                      </span>
+                      <input
+                        aria-label="相似度阈值"
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={scoreThreshold}
+                        onChange={(event) => setScoreThreshold(event.target.value)}
+                      />
+                    </label>
+                    {activeTab === "ask" && (
+                      <label className="knowledge-answer-toggle">
+                        <input
+                          type="checkbox"
+                          checked={generateAnswer}
+                          onChange={(event) => setGenerateAnswer(event.target.checked)}
+                        />
+                        <span>生成模型回答</span>
+                      </label>
+                    )}
+                  </div>
                   <div className="knowledge-query-actions">
-                    <span>最多返回 5 个相关片段</span>
+                    <span>
+                      {activeTab === "ask" && generateAnswer
+                        ? "回答必须基于下方引用"
+                        : "只返回可核验的检索片段"}
+                    </span>
                     <button
                       className="primary"
                       onClick={() => void query()}
@@ -4672,9 +5454,7 @@ function KnowledgeBasePage() {
                     <div className="knowledge-answer">
                       <div className="knowledge-answer-head">
                         <b>回答</b>
-                        <span
-                          className={`chip ${result.confidence === "low" ? "" : "success"}`}
-                        >
+                        <span className={`chip ${result.confidence === "low" ? "" : "success"}`}>
                           {result.confidence === "high"
                             ? "高置信度"
                             : result.confidence === "medium"
@@ -4684,7 +5464,17 @@ function KnowledgeBasePage() {
                       </div>
                       <p>{result.answer}</p>
                       <div className="knowledge-answer-meta">
-                        检索模式：{result.retrieval_mode} · 查询 ID：
+                        检索模式：{result.retrieval_mode} ·{" "}
+                        {result.generation_mode === "model"
+                          ? "模型生成"
+                          : result.generation_mode === "extractive"
+                            ? "抽取式降级"
+                            : result.generation_mode === "retrieval-only"
+                              ? "仅检索"
+                              : "无回答"}
+                        {" · "}
+                        候选 {result.candidate_count} 条 · 阈值 {result.score_threshold.toFixed(2)}{" "}
+                        · {result.retrieval_latency_ms} ms · 查询 ID：
                         {result.query_id}
                       </div>
                       <div className="knowledge-citations">
@@ -4693,28 +5483,39 @@ function KnowledgeBasePage() {
                           {result.citations.length}）
                         </div>
                         {result.citations.map((citation) => (
-                          <div
-                            className="knowledge-citation"
-                            key={citation.chunk_id}
-                          >
+                          <div className="knowledge-citation" key={citation.chunk_id}>
                             <div className="citation-rank">{citation.rank}</div>
                             <div>
                               <b>{citation.document_title}</b>
                               <span>{citation.excerpt}</span>
                               <small>
                                 相关度 {(citation.score * 100).toFixed(0)}% ·{" "}
-                                {citation.source_uri}
+                                {citation.retrieval_reason} · 片段 {citation.position + 1}
                               </small>
+                              <div className="knowledge-citation-foot">
+                                <span>
+                                  命中词：
+                                  {citation.matched_terms.length
+                                    ? citation.matched_terms.join("、")
+                                    : "语义相似"}
+                                </span>
+                                <button
+                                  className="text-btn"
+                                  onClick={() => {
+                                    setActiveTab("documents");
+                                    setSelectedDocumentId(citation.document_id);
+                                    void loadChunks(selected.id, citation.document_id);
+                                  }}
+                                >
+                                  查看分块 <ChevronRight size={13} />
+                                </button>
+                              </div>
                             </div>
                           </div>
                         ))}
                       </div>
                       <div className="knowledge-feedback">
-                        <span>
-                          {feedback === "idle"
-                            ? "这次结果是否有帮助？"
-                            : "反馈已记录"}
-                        </span>
+                        <span>{feedback === "idle" ? "这次结果是否有帮助？" : "反馈已记录"}</span>
                         <button
                           className={feedback === "helpful" ? "active" : ""}
                           title="有帮助"
@@ -4724,9 +5525,7 @@ function KnowledgeBasePage() {
                           有帮助
                         </button>
                         <button
-                          className={
-                            feedback === "not-helpful" ? "active negative" : ""
-                          }
+                          className={feedback === "not-helpful" ? "active negative" : ""}
                           title="需改进"
                           onClick={() => void submitFeedback(false)}
                           disabled={feedback !== "idle" || busy === "feedback"}
@@ -4756,9 +5555,7 @@ function KnowledgeBasePage() {
                           </small>
                         </button>
                       ))}
-                      {!queries.length && (
-                        <div className="empty">运行一次检索后显示记录</div>
-                      )}
+                      {!queries.length && <div className="empty">运行一次检索后显示记录</div>}
                     </div>
                   )}
                 </div>
@@ -4774,38 +5571,79 @@ function KnowledgeBasePage() {
                     </div>
                     <div className="knowledge-document-list">
                       {documents.map((document) => (
-                        <button
+                        <div
                           className={
                             selectedDocumentId === document.id
                               ? "knowledge-document-row active"
-                              : "knowledge-document-row"
+                              : `knowledge-document-row${document.enabled ? "" : " disabled"}`
                           }
                           key={document.id}
-                          onClick={() => {
-                            setSelectedDocumentId(document.id);
-                            void loadChunks(selected.id, document.id);
-                          }}
                         >
-                          <span className="knowledge-doc-icon">
-                            <FileText size={15} />
-                          </span>
-                          <div>
-                            <b>{document.title}</b>
-                            <span>
-                              {document.source_type} · {document.chunk_count}{" "}
-                              个片段
+                          <button
+                            className="knowledge-document-select"
+                            onClick={() => {
+                              setSelectedDocumentId(document.id);
+                              void loadChunks(selected.id, document.id);
+                            }}
+                          >
+                            <span className="knowledge-doc-icon">
+                              <FileText size={15} />
                             </span>
-                          </div>
-                          <span className="chip success">
+                            <div>
+                              <b>{document.title}</b>
+                              <span>
+                                {document.source_type} · {document.chunk_count} 个片段 ·{" "}
+                                {(document.content_size / 1024).toFixed(1)} KB
+                              </span>
+                            </div>
+                          </button>
+                          <span
+                            className={`chip ${document.status === "ready" && document.enabled ? "success" : ""}`}
+                          >
                             {document.status === "ready"
-                              ? "已就绪"
-                              : document.status}
+                              ? document.enabled
+                                ? "已就绪"
+                                : "已暂停"
+                              : document.status === "processing"
+                                ? "处理中"
+                                : "失败"}
                           </span>
-                        </button>
+                          <div className="knowledge-document-actions">
+                            <button
+                              className="icon-btn subtle"
+                              title={document.enabled ? "暂停检索" : "参与检索"}
+                              aria-label={
+                                document.enabled
+                                  ? `暂停 ${document.title}`
+                                  : `启用 ${document.title}`
+                              }
+                              disabled={Boolean(busy)}
+                              onClick={() => void toggleDocument(document)}
+                            >
+                              {document.enabled ? <Eye size={14} /> : <EyeOff size={14} />}
+                            </button>
+                            <button
+                              className="icon-btn subtle"
+                              title="重新索引"
+                              aria-label={`重新索引 ${document.title}`}
+                              disabled={Boolean(busy)}
+                              onClick={() => void reindexDocument(document)}
+                            >
+                              <RefreshCw size={14} />
+                            </button>
+                            <button
+                              className="icon-btn subtle danger"
+                              title="删除文档"
+                              aria-label={`删除 ${document.title}`}
+                              disabled={Boolean(busy)}
+                              onClick={() => void removeDocument(document)}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
                       ))}
-                      {!documents.length && (
-                        <div className="empty">尚未添加文档</div>
-                      )}
+                      {!documents.length && <div className="empty">尚未添加文档</div>}
                     </div>
                     {selectedDocumentId && (
                       <div className="knowledge-chunks">
@@ -4829,9 +5667,7 @@ function KnowledgeBasePage() {
                       <h3>
                         <UploadCloud size={16} /> 添加资料
                       </h3>
-                      <span className="panel-help">
-                        支持 TXT / Markdown / HTML / JSON / SQL
-                      </span>
+                      <span className="panel-help">支持 TXT / Markdown / HTML / JSON / SQL</span>
                     </div>
                     <div className="knowledge-ingest-tabs">
                       <span className="active">
@@ -4865,12 +5701,9 @@ function KnowledgeBasePage() {
                     <button
                       className="primary wide"
                       onClick={() => void addTextDocument()}
-                      disabled={
-                        busy === "text" || !title.trim() || !content.trim()
-                      }
+                      disabled={busy === "text" || !title.trim() || !content.trim()}
                     >
-                      <Plus size={15} />{" "}
-                      {busy === "text" ? "入库中..." : "入库文本"}
+                      <Plus size={15} /> {busy === "text" ? "入库中..." : "入库文本"}
                     </button>
                     <div className="knowledge-directory">
                       <label>
@@ -4891,57 +5724,6 @@ function KnowledgeBasePage() {
                         </button>
                       </div>
                     </div>
-                  </div>
-                </div>
-              )}
-              {activeTab === "settings" && (
-                <div className="panel knowledge-settings">
-                  <div className="panel-head">
-                    <h3>
-                      <Settings size={16} /> 知识库配置
-                    </h3>
-                    <span className="chip success">本地索引</span>
-                  </div>
-                  <div className="knowledge-setting-grid">
-                    <label>
-                      <span>知识库名称</span>
-                      <input value={selected.name} readOnly />
-                    </label>
-                    <label>
-                      <span>可见范围</span>
-                      <input
-                        value={
-                          selected.scope === "workspace"
-                            ? "当前工作区"
-                            : selected.scope
-                        }
-                        readOnly
-                      />
-                    </label>
-                    <label>
-                      <span>检索策略</span>
-                      <input value={selected.retrieval_strategy} readOnly />
-                    </label>
-                    <label>
-                      <span>索引提供方</span>
-                      <input value={selected.embedding_provider} readOnly />
-                    </label>
-                    <label>
-                      <span>分块大小</span>
-                      <input value={selected.chunk_size} readOnly />
-                    </label>
-                    <label>
-                      <span>相邻重叠</span>
-                      <input value={selected.chunk_overlap} readOnly />
-                    </label>
-                  </div>
-                  <div className="policy-box">
-                    <b>生产切换条件</b>
-                    <p>
-                      完成持久化、向量检索、模型网关、文档 ACL
-                      和异步索引验收后，再把索引模式从 local-keyword 切换为
-                      hybrid。
-                    </p>
                   </div>
                 </div>
               )}
@@ -5006,15 +5788,9 @@ function ScenarioCenter() {
   useEffect(() => {
     void load();
   }, []);
-  const categories = [
-    "全部",
-    ...Array.from(new Set(scenarios.map((item) => item.category))),
-  ];
-  const filtered = scenarios.filter(
-    (item) => category === "全部" || item.category === category,
-  );
-  const selected =
-    scenarios.find((item) => item.id === selectedId) || filtered[0];
+  const categories = ["全部", ...Array.from(new Set(scenarios.map((item) => item.category)))];
+  const filtered = scenarios.filter((item) => category === "全部" || item.category === category);
+  const selected = scenarios.find((item) => item.id === selectedId) || filtered[0];
   const start = async () => {
     if (!selected || !objective.trim()) return;
     setBusy(true);
@@ -5037,14 +5813,11 @@ function ScenarioCenter() {
     setBusy(true);
     setError("");
     try {
-      const run = await api<ScenarioRun>(
-        `/scenario-runs/${selectedRun.run_id}/${action}`,
-        { method: "POST" },
-      );
+      const run = await api<ScenarioRun>(`/scenario-runs/${selectedRun.run_id}/${action}`, {
+        method: "POST",
+      });
       setSelectedRun(run);
-      setRuns((current) =>
-        current.map((item) => (item.run_id === run.run_id ? run : item)),
-      );
+      setRuns((current) => current.map((item) => (item.run_id === run.run_id ? run : item)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "场景状态更新失败");
     } finally {
@@ -5055,13 +5828,10 @@ function ScenarioCenter() {
     <section className="content scenario-page">
       <div className="section-head">
         <div>
-          <span className="eyebrow">
-            Agent Team · 定时触发 · 任务留痕 · 人工审批
-          </span>
+          <span className="eyebrow">Agent Team · 定时触发 · 任务留痕 · 人工审批</span>
           <h1>场景中心</h1>
           <p className="section-subtitle">
-            把多场景探索中的协作模式落成可配置、可运行、可追踪的企业 AI
-            控制平面。
+            把多场景探索中的协作模式落成可配置、可运行、可追踪的企业 AI 控制平面。
           </p>
         </div>
         <button className="secondary" onClick={() => void load()}>
@@ -5077,26 +5847,14 @@ function ScenarioCenter() {
           hint="来自多场景探索"
           tone="blue"
         />
-        <Metric
-          label="运行实例"
-          value={String(runs.length)}
-          hint="可追踪任务"
-          tone="green"
-        />
+        <Metric label="运行实例" value={String(runs.length)} hint="可追踪任务" tone="green" />
         <Metric
           label="待审批"
-          value={String(
-            runs.filter((item) => item.status === "waiting_approval").length,
-          )}
+          value={String(runs.filter((item) => item.status === "waiting_approval").length)}
           hint="高风险动作已阻断"
           tone="red"
         />
-        <Metric
-          label="已接入模式"
-          value="只读优先"
-          hint="Runbook 可扩展"
-          tone="purple"
-        />
+        <Metric label="已接入模式" value="只读优先" hint="Runbook 可扩展" tone="purple" />
       </div>
       <div className="scenario-layout">
         <div className="scenario-library panel">
@@ -5122,11 +5880,7 @@ function ScenarioCenter() {
             {filtered.map((item) => (
               <button
                 key={item.id}
-                className={
-                  selected?.id === item.id
-                    ? "scenario-card active"
-                    : "scenario-card"
-                }
+                className={selected?.id === item.id ? "scenario-card active" : "scenario-card"}
                 onClick={() => setSelectedId(item.id)}
               >
                 <div className="scenario-card-top">
@@ -5231,9 +5985,7 @@ function ScenarioCenter() {
                 <div className="panel-head">
                   <div>
                     <h3>启动一次协作任务</h3>
-                    <span className="panel-help">
-                      任务会创建根实例，步骤完成前保留审计和证据。
-                    </span>
+                    <span className="panel-help">任务会创建根实例，步骤完成前保留审计和证据。</span>
                   </div>
                   <span className="chip success">审批门禁已开启</span>
                 </div>
@@ -5247,11 +5999,7 @@ function ScenarioCenter() {
                   onChange={(event) => setContext(event.target.value)}
                   placeholder="可选上下文：环境、时间范围、服务或业务范围"
                 />
-                <button
-                  className="primary"
-                  onClick={start}
-                  disabled={busy || !objective.trim()}
-                >
+                <button className="primary" onClick={start} disabled={busy || !objective.trim()}>
                   <PlayCircle size={16} />
                   {busy ? "提交中…" : "启动场景"}
                 </button>
@@ -5275,11 +6023,7 @@ function ScenarioCenter() {
         ) : (
           runs.slice(0, 5).map((run) => (
             <button
-              className={
-                selectedRun?.run_id === run.run_id
-                  ? "run-row active"
-                  : "run-row"
-              }
+              className={selectedRun?.run_id === run.run_id ? "run-row active" : "run-row"}
               key={run.run_id}
               onClick={() => setSelectedRun(run)}
             >
@@ -5340,12 +6084,9 @@ function ScenarioCenter() {
               />
             </div>
             <small>
-              {
-                selectedRun.steps.filter((item) => item.status === "completed")
-                  .length
-              }
-              /{selectedRun.steps.length} 步完成 · 审批{" "}
-              {selectedRun.approvals_granted}/{selectedRun.approvals_required}
+              {selectedRun.steps.filter((item) => item.status === "completed").length}/
+              {selectedRun.steps.length} 步完成 · 审批 {selectedRun.approvals_granted}/
+              {selectedRun.approvals_required}
             </small>
           </div>
           <div className="run-step-list">
@@ -5398,9 +6139,7 @@ function SQLOptimizerPage() {
   );
   const [endpoint, setEndpoint] = useState("");
   const [directoryOpen, setDirectoryOpen] = useState(false);
-  const [directoryPath, setDirectoryPath] = useState(
-    "/workspace/data/sql-optimizer",
-  );
+  const [directoryPath, setDirectoryPath] = useState("/workspace/data/sql-optimizer");
   const [bundle, setBundle] = useState<{
     files: string[];
     sql_items: { name: string; sql: string }[];
@@ -5485,25 +6224,17 @@ function SQLOptimizerPage() {
     <section className="content sql-optimizer-page">
       <div className="section-head">
         <div>
-          <span className="eyebrow">
-            AIOps · TiDB Planner · SQLAdvisor 方法
-          </span>
+          <span className="eyebrow">AIOps · TiDB Planner · SQLAdvisor 方法</span>
           <h1>SQL 优化</h1>
           <p className="section-subtitle">
-            输入 SQL 与表结构，按 TiDB
-            版本生成可解释的索引、改写和执行计划建议。
+            输入 SQL 与表结构，按 TiDB 版本生成可解释的索引、改写和执行计划建议。
           </p>
         </div>
         <div className="sql-actions">
           <label className="primary file-button">
             <UploadCloud size={16} />
             读取 SQL/DDL
-            <input
-              type="file"
-              accept=".sql,.ddl,.txt"
-              multiple
-              onChange={upload}
-            />
+            <input type="file" accept=".sql,.ddl,.txt" multiple onChange={upload} />
           </label>
           <button className="secondary" onClick={() => setDirectoryOpen(true)}>
             <FileCode2 size={16} />
@@ -5658,10 +6389,7 @@ function SQLOptimizerPage() {
               }}
             />
             <div className="dialog-actions">
-              <button
-                className="secondary"
-                onClick={() => setDirectoryOpen(false)}
-              >
+              <button className="secondary" onClick={() => setDirectoryOpen(false)}>
                 取消
               </button>
               <button
@@ -5688,13 +6416,7 @@ function OptimizerResult({ result }: { result: OptimizeResult }) {
             <span className="eyebrow">分析结果 · {result.analysis_id}</span>
             <h2>{result.summary}</h2>
           </div>
-          <span
-            className={
-              result.optimizer_mode === "live"
-                ? "chip success"
-                : "chip simulated"
-            }
-          >
+          <span className={result.optimizer_mode === "live" ? "chip success" : "chip simulated"}>
             {result.optimizer_mode === "live" ? "真实 EXPLAIN" : "版本模拟"}
           </span>
         </div>
@@ -5702,9 +6424,7 @@ function OptimizerResult({ result }: { result: OptimizeResult }) {
           <span>目标版本 {result.requested_version}</span>
           <span>规则包 {result.profile_version}</span>
           <span>置信度 {result.confidence}</span>
-          {result.actual_tidb_version && (
-            <span>集群 {result.actual_tidb_version}</span>
-          )}
+          {result.actual_tidb_version && <span>集群 {result.actual_tidb_version}</span>}
         </div>
         {result.assumptions.length > 0 && (
           <div className="assumptions">
@@ -5727,8 +6447,7 @@ function OptimizerResult({ result }: { result: OptimizeResult }) {
               <div className="row-main">
                 <b>{node.id}</b>
                 <span>
-                  {node.task} · {node.access_object || "root"} · estRows{" "}
-                  {node.est_rows}
+                  {node.task} · {node.access_object || "root"} · estRows {node.est_rows}
                 </span>
                 <small>{node.operator_info}</small>
               </div>
@@ -5738,9 +6457,7 @@ function OptimizerResult({ result }: { result: OptimizeResult }) {
         <div className="recommendation-panel panel">
           <div className="panel-head">
             <h3>优化建议</h3>
-            <span className="chip success">
-              {result.recommendations.length} 条
-            </span>
+            <span className="chip success">{result.recommendations.length} 条</span>
           </div>
           {result.recommendations.map((item) => (
             <div className="recommendation" key={item.id}>
@@ -5755,9 +6472,7 @@ function OptimizerResult({ result }: { result: OptimizeResult }) {
                 <b>{item.title}</b>
                 <span>{item.rationale}</span>
                 <code>{item.action}</code>
-                {item.evidence.length > 0 && (
-                  <small>证据：{item.evidence.join(" · ")}</small>
-                )}
+                {item.evidence.length > 0 && <small>证据：{item.evidence.join(" · ")}</small>}
               </div>
             </div>
           ))}
@@ -5775,12 +6490,7 @@ function OptimizerResult({ result }: { result: OptimizeResult }) {
         </div>
         <div className="source-list">
           {result.sources.map((source) => (
-            <a
-              href={source.url}
-              target="_blank"
-              rel="noreferrer"
-              key={source.url}
-            >
+            <a href={source.url} target="_blank" rel="noreferrer" key={source.url}>
               {source.label} · {source.ref}
             </a>
           ))}

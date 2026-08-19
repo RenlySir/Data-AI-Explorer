@@ -36,7 +36,7 @@ class ModelConnectionCreate(BaseModel):
     provider: ProviderId
     deployment: DeploymentKind
     base_url: str = Field(min_length=8, max_length=2048)
-    model: str = Field(min_length=1, max_length=200)
+    model: str = Field(default="", max_length=200)
     api_key: SecretStr | None = None
     test_on_create: bool = True
     set_default: bool = True
@@ -51,6 +51,11 @@ class ModelConnectionCreate(BaseModel):
             raise ValueError("base_url cannot contain credentials, query, or fragment")
         return value.strip().rstrip("/")
 
+    @field_validator("model")
+    @classmethod
+    def normalize_model(cls, value: str) -> str:
+        return value.strip()
+
 
 class ModelConnection(BaseModel):
     id: str
@@ -61,6 +66,7 @@ class ModelConnection(BaseModel):
     protocol: str
     base_url: str
     model: str
+    model_source: Literal["manual", "auto", "gateway-default", "unspecified"] = "manual"
     status: Literal["ready", "unverified", "error"]
     is_default: bool = False
     has_credential: bool = False
@@ -118,6 +124,7 @@ def create_connection(payload: ModelConnectionCreate) -> ModelConnection:
         protocol=provider.protocol,
         base_url=payload.base_url,
         model=payload.model,
+        model_source="manual" if payload.model else "unspecified",
         status="unverified",
         has_credential=bool(payload.api_key and payload.api_key.get_secret_value()),
         is_default=False,
@@ -140,6 +147,34 @@ def _chat_url(item: ModelConnection) -> str:
     return base + "/chat/completions" if base.endswith(("/v1", "/v4")) else base + "/v1/chat/completions"
 
 
+def _model_ids(payload: Any) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    candidates: list[str] = []
+    for key in ("data", "models"):
+        values = payload.get(key, [])
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if isinstance(value, str):
+                candidate = value
+            elif isinstance(value, dict):
+                candidate = value.get("id") or value.get("name") or value.get("model")
+            else:
+                candidate = None
+            if isinstance(candidate, str) and candidate.strip() and candidate.strip() not in candidates:
+                candidates.append(candidate.strip())
+    return candidates
+
+
+def _chat_model_ids(model_ids: list[str]) -> list[str]:
+    non_chat_hints = ("embed", "rerank", "whisper", "tts", "image", "dall-e", "moderation")
+    chat_models = [
+        model_id for model_id in model_ids if not any(hint in model_id.lower() for hint in non_chat_hints)
+    ]
+    return (chat_models or model_ids)[:8]
+
+
 def set_default_connection(connection_id: str) -> ModelConnection:
     selected = MODEL_CONNECTIONS[connection_id]
     if selected.status != "ready":
@@ -160,23 +195,59 @@ def test_connection(item: ModelConnection, set_default: bool = False) -> ModelCo
         headers["Authorization"] = f"Bearer {secret}"
     try:
         with httpx.Client(timeout=8, follow_redirects=False) as client:
-            response = client.get(_models_url(item), headers=headers)
-            response.raise_for_status()
-            probe = client.post(
-                _chat_url(item),
-                headers=headers,
-                json={
-                    "model": item.model,
+            resolved_model = item.model.strip()
+            model_source = item.model_source
+            model_candidates = [resolved_model] if resolved_model else []
+            try:
+                response = client.get(_models_url(item), headers=headers)
+                response.raise_for_status()
+                if not resolved_model:
+                    discovered = _chat_model_ids(_model_ids(response.json()))
+                    if discovered:
+                        model_candidates = discovered
+                        model_source = "auto"
+            except Exception:
+                # Some compatible gateways omit the model-list endpoint but
+                # still expose a usable default model on chat/completions.
+                pass
+            if not model_candidates:
+                model_candidates = [""]
+            last_probe_error: Exception | None = None
+            for candidate in model_candidates:
+                request_payload: dict[str, Any] = {
                     "temperature": 0,
                     "max_tokens": 2,
                     "messages": [{"role": "user", "content": "Reply OK"}],
-                },
-            )
-            probe.raise_for_status()
-            payload = probe.json()
-            if not isinstance(payload.get("choices"), list) or not payload["choices"]:
-                raise ValueError("model response is missing choices")
-        updated = item.model_copy(update={"status": "ready", "last_error": None, "last_tested_at": now_iso()})
+                }
+                if candidate:
+                    request_payload["model"] = candidate
+                try:
+                    probe = client.post(
+                        _chat_url(item),
+                        headers=headers,
+                        json=request_payload,
+                    )
+                    probe.raise_for_status()
+                    payload = probe.json()
+                    if not isinstance(payload.get("choices"), list) or not payload["choices"]:
+                        raise ValueError("model response is missing choices")
+                    resolved_model = candidate
+                    break
+                except Exception as exc:
+                    last_probe_error = exc
+            else:
+                if last_probe_error:
+                    raise last_probe_error
+                raise ValueError("no usable chat model was discovered")
+        updated = item.model_copy(
+            update={
+                "model": resolved_model,
+                "model_source": model_source if resolved_model else "gateway-default",
+                "status": "ready",
+                "last_error": None,
+                "last_tested_at": now_iso(),
+            }
+        )
         MODEL_CONNECTIONS[item.id] = updated
         if set_default or not any(connection.is_default for connection in MODEL_CONNECTIONS.values()):
             return set_default_connection(item.id)

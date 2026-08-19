@@ -1,0 +1,22 @@
+[Unit]
+Description=Aegis AI Control Plane Web Demo
+After=network-online.target aegis-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aegis
+Group=aegis
+WorkingDirectory=/opt/aegis-ai/web
+EnvironmentFile=-/etc/aegis-ai/aegis.env
+# Python 3.6 on CentOS 8 has no --directory option; WorkingDirectory is the
+# document root for the static Vite build.
+ExecStart=/usr/bin/python3 -m http.server ${AEGIS_WEB_PORT} --bind 0.0.0.0
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
