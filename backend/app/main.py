@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import json
+import os
+import re
+import shutil
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Query
+import httpx
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -16,6 +23,9 @@ def now_iso() -> str:
 class QueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     datasource_id: str = "demo-warehouse"
+    source_type: str = "tidb"
+    dataset_ids: list[str] = Field(default_factory=list)
+    mcp_endpoint: str | None = None
 
 
 class QueryOperation(BaseModel):
@@ -24,9 +34,10 @@ class QueryOperation(BaseModel):
     question: str
     sql: str | None = None
     answer: str | None = None
-    columns: list[str] = []
-    rows: list[list[Any]] = []
-    evidence: list[dict[str, str]] = []
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list[Any]] = Field(default_factory=list)
+    evidence: list[dict[str, str]] = Field(default_factory=list)
+    chart: dict[str, Any] | None = None
     created_at: str
 
 
@@ -54,6 +65,58 @@ class Asset(BaseModel):
     downstream: list[str]
 
 
+class TidbMcpIntrospectRequest(BaseModel):
+    endpoint: str | None = Field(default=None, min_length=1, max_length=2048)
+    token: str | None = Field(default=None, max_length=4096)
+    database: str | None = None
+    tool_map: dict[str, str] = Field(default_factory=dict)
+
+
+class DatasetAnalyzeRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    dataset_ids: list[str] = Field(min_length=1, max_length=20)
+
+
+class LocalDirectoryRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=1024)
+
+
+class Dataset(BaseModel):
+    id: str
+    name: str
+    kind: str
+    path: str
+    rows: int
+    columns: list[dict[str, str]]
+    created_at: str
+
+
+class CatalogColumn(BaseModel):
+    name: str
+    data_type: str
+    comment: str | None = None
+    nullable: bool = True
+
+
+class CatalogTable(BaseModel):
+    name: str
+    comment: str | None = None
+    columns: list[CatalogColumn] = Field(default_factory=list)
+
+
+class CatalogSchema(BaseModel):
+    name: str
+    tables: list[CatalogTable] = Field(default_factory=list)
+
+
+class TidbCatalog(BaseModel):
+    database: str
+    schemas: list[CatalogSchema] = Field(default_factory=list)
+    relationships: list[dict[str, str]] = Field(default_factory=list)
+    source: str
+    collected_at: str
+
+
 INCIDENTS = [
     Incident(id="inc-1001", title="订单同步延迟超过阈值", severity="P1", status="investigating", service="order-sync", started_at="2026-08-19T08:42:00+08:00", summary="Kafka consumer lag持续增长，影响近30分钟订单入仓。", recommended_action="扩容 consumer 并重启卡住的分区任务。"),
     Incident(id="inc-1002", title="报表任务运行失败", severity="P2", status="open", service="bi-scheduler", started_at="2026-08-19T07:15:00+08:00", summary="daily_sales 聚合任务因源表字段变更失败。", recommended_action="检查字段兼容性并重新执行任务。"),
@@ -66,10 +129,256 @@ ASSETS = [
     Asset(id="asset-order-sync", name="order_sync_lag", type="metric", owner="SRE", status="active", database="observability", description="订单同步 Kafka consumer lag 指标。", columns=[{"name": "value", "type": "gauge", "sensitivity": "internal"}], upstream=[], downstream=["inc-1001"]),
 ]
 
-OPERATIONS: dict[str, QueryOperation] = {}
+DEMO_CATALOG = TidbCatalog(
+    database="demo_tidb",
+    source="demo",
+    collected_at=now_iso(),
+    schemas=[
+        CatalogSchema(name="sales", tables=[
+            CatalogTable(name="orders", comment="订单主表", columns=[CatalogColumn(name="order_id", data_type="BIGINT", comment="订单唯一标识", nullable=False), CatalogColumn(name="customer_id", data_type="BIGINT", comment="客户标识"), CatalogColumn(name="amount", data_type="DECIMAL(18,2)", comment="订单金额"), CatalogColumn(name="created_at", data_type="DATETIME", comment="下单时间")]),
+            CatalogTable(name="customers", comment="客户维表", columns=[CatalogColumn(name="customer_id", data_type="BIGINT", comment="客户唯一标识", nullable=False), CatalogColumn(name="region", data_type="VARCHAR(64)", comment="客户所属区域")]),
+        ]),
+        CatalogSchema(name="reporting", tables=[CatalogTable(name="daily_sales", comment="日销售汇总", columns=[CatalogColumn(name="stat_date", data_type="DATE", comment="统计日期"), CatalogColumn(name="gmv", data_type="DECIMAL(18,2)", comment="日 GMV")])]),
+    ],
+    relationships=[{"from": "sales.orders.customer_id", "to": "sales.customers.customer_id", "type": "foreign_key"}, {"from": "sales.orders", "to": "reporting.daily_sales", "type": "derived"}],
+)
 
-app = FastAPI(title="Data AI Explorer API", version="0.1.0", description="企业 AI 落地平台的可运行 MVP API")
+OPERATIONS: dict[str, QueryOperation] = {}
+CATALOG: TidbCatalog = DEMO_CATALOG
+MCP_CONNECTION: TidbMcpIntrospectRequest | None = None
+DATASETS: dict[str, Dataset] = {}
+DATASET_DIR = Path(os.getenv("DATASET_STORAGE_DIR", tempfile.gettempdir() + "/aegis-datasets"))
+DATASET_DIR.mkdir(parents=True, exist_ok=True)
+
+app = FastAPI(title="Data AI Explorer API", version="0.2.0", description="企业 AI 落地平台的智能问数和数据目录 API")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://localhost:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+
+def chart_spec(columns: list[str], rows: list[list[Any]], title: str) -> dict[str, Any]:
+    if not columns or not rows:
+        return {"type": "table", "title": title, "option": {}}
+    x = columns[0]
+    numeric_index = next((i for i, name in enumerate(columns[1:], start=1) if any(isinstance(row[i], (int, float)) for row in rows)), 1 if len(columns) > 1 else 0)
+    y = columns[numeric_index]
+    return {"type": "line", "title": title, "xField": x, "yField": y, "option": {"xAxis": {"type": "category", "data": [row[0] for row in rows]}, "yAxis": {"type": "value"}, "series": [{"type": "line", "smooth": True, "data": [row[numeric_index] for row in rows]}]}}
+
+
+def safe_select(sql: str) -> str:
+    """Reject write/multi-statement SQL before it reaches a database or DuckDB."""
+    candidate = sql.strip().rstrip(";").strip()
+    if not candidate or ";" in candidate or not re.match(r"(?is)^with\b|^select\b", candidate):
+        raise HTTPException(400, "only a single SELECT/CTE statement is allowed")
+    if re.search(r"(?is)\b(insert|update|delete|drop|alter|truncate|grant|revoke|create|replace|call|load)\b", candidate):
+        raise HTTPException(400, "write or administrative SQL is blocked")
+    return candidate
+
+
+DANGEROUS_QUERY_RE = re.compile(
+    r"(?is)\b(insert|update|delete|drop|alter|truncate|grant|revoke|create|replace|call|load)\b"
+    r"|删除|删表|更新|修改|写入|建表|授权|撤销权限|执行存储过程"
+)
+
+
+def reject_dangerous_intent(question: str) -> None:
+    """Reject explicit write or administrative intent before Text2SQL generation."""
+    if DANGEROUS_QUERY_RE.search(question):
+        raise HTTPException(400, "write or administrative intent is blocked")
+
+
+def heuristic_sql(question: str, catalog: TidbCatalog) -> str:
+    table = "reporting.daily_sales"
+    date_column = "stat_date"
+    value_column = "gmv"
+    for schema in catalog.schemas:
+        for item in schema.tables:
+            names = {column.name.lower() for column in item.columns}
+            if "gmv" in names or "amount" in names:
+                table = f"{schema.name}.{item.name}"
+                value_column = "gmv" if "gmv" in names else "amount"
+                date_column = next((name for name in names if "date" in name or "created" in name), date_column)
+                break
+    if any(word in question.lower() for word in ("趋势", "trend", "每天", "按日")):
+        return f"SELECT {date_column}, SUM({value_column}) AS total_value FROM {table} GROUP BY {date_column} ORDER BY {date_column}"
+    return f"SELECT {date_column}, SUM({value_column}) AS total_value FROM {table} GROUP BY {date_column} ORDER BY {date_column} LIMIT 100"
+
+
+def catalog_context(catalog: TidbCatalog) -> str:
+    return "\n".join(f"{schema.name}.{table.name}: " + ", ".join(f"{column.name} {column.data_type} -- {column.comment or ''}" for column in table.columns) for schema in catalog.schemas for table in schema.tables)
+
+
+async def model_sql(question: str, catalog: TidbCatalog) -> str:
+    endpoint = os.getenv("MODEL_GATEWAY_BASE_URL", "").strip()
+    model = os.getenv("MODEL_GATEWAY_MODEL", "")
+    if not endpoint or not model:
+        return heuristic_sql(question, catalog)
+    payload = {"model": model, "temperature": 0, "messages": [{"role": "system", "content": "You generate one read-only TiDB SELECT statement. Return SQL only."}, {"role": "user", "content": f"Schema:\n{catalog_context(catalog)}\nQuestion: {question}"}]}
+    headers = {}
+    if os.getenv("MODEL_GATEWAY_API_KEY"):
+        headers["Authorization"] = f"Bearer {os.environ['MODEL_GATEWAY_API_KEY']}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(endpoint.rstrip("/") + "/v1/chat/completions", json=payload, headers=headers)
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+    return content.replace("```sql", "").replace("```", "").strip()
+
+
+def normalize_tool_result(result: Any) -> Any:
+    structured = getattr(result, "structured_content", None)
+    if structured is not None:
+        return structured
+    content = getattr(result, "content", result)
+    if isinstance(content, list):
+        for item in content:
+            text = getattr(item, "text", None)
+            if text:
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    return text
+    return content
+
+
+def pick_tool(available: list[str], aliases: list[str], configured: str | None) -> str:
+    if configured:
+        return configured
+    for alias in aliases:
+        if alias in available:
+            return alias
+    raise RuntimeError(f"MCP server is missing one of tools: {', '.join(aliases)}")
+
+
+async def call_mcp(endpoint: str, token: str | None, tool_map: dict[str, str], operation: str, arguments: dict[str, Any]) -> Any:
+    try:
+        from mcp import Client
+    except ImportError as exc:
+        raise HTTPException(503, "MCP client dependency is not installed") from exc
+    headers = {"Authorization": f"Bearer {token}"} if token else None
+    try:
+        client = Client(endpoint, headers=headers) if headers else Client(endpoint)
+    except TypeError:
+        client = Client(endpoint)
+    async with client as session:
+        listed = await session.list_tools()
+        tools = getattr(listed, "tools", listed)
+        names = [getattr(item, "name", str(item)) for item in tools]
+        aliases = {
+            "schemas": ["list_schemas", "get_schemas", "show_schemas"],
+            "tables": ["list_tables", "get_tables", "show_tables"],
+            "columns": ["describe_table", "get_table_schema", "get_columns", "describe"],
+            "relationships": ["list_relationships", "get_relationships", "list_foreign_keys", "get_lineage"],
+            "query": ["execute_query", "query", "run_sql", "execute_sql"],
+        }[operation]
+        tool = pick_tool(names, aliases, tool_map.get(operation))
+        return normalize_tool_result(await session.call_tool(tool, arguments))
+
+
+def rows_from_result(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        for key in ("rows", "data", "items", "tables", "schemas", "columns"):
+            if key in value:
+                return rows_from_result(value[key])
+        return [value]
+    if isinstance(value, list):
+        if not value:
+            return []
+        if all(isinstance(item, dict) for item in value):
+            return value
+        if all(isinstance(item, (list, tuple)) for item in value):
+            return [{str(index): item for index, item in enumerate(row)} for row in value]
+    return []
+
+
+async def introspect_mcp(payload: TidbMcpIntrospectRequest) -> TidbCatalog:
+    endpoint = payload.endpoint or os.getenv("TIDB_MCP_ENDPOINT", "").strip()
+    if not endpoint:
+        raise HTTPException(400, "MCP endpoint is required")
+    if endpoint in ("demo://tidb", "demo"):
+        return DEMO_CATALOG.model_copy(update={"source": "demo", "collected_at": now_iso()})
+    try:
+        schemas_raw = await call_mcp(endpoint, payload.token, payload.tool_map, "schemas", {"database": payload.database} if payload.database else {})
+        schema_rows = rows_from_result(schemas_raw)
+        schemas: list[CatalogSchema] = []
+        for schema_item in schema_rows:
+            schema_name = str(schema_item.get("name") or schema_item.get("schema_name") or schema_item.get("SCHEMA_NAME") or next(iter(schema_item.values()), "unknown"))
+            tables_raw = await call_mcp(endpoint, payload.token, payload.tool_map, "tables", {"schema": schema_name, "database": payload.database} if payload.database else {"schema": schema_name})
+            table_rows = rows_from_result(tables_raw)
+            tables: list[CatalogTable] = []
+            for table_item in table_rows:
+                table_name = str(table_item.get("name") or table_item.get("table_name") or table_item.get("TABLE_NAME") or next(iter(table_item.values()), "unknown"))
+                columns_raw = await call_mcp(endpoint, payload.token, payload.tool_map, "columns", {"schema": schema_name, "table": table_name, "database": payload.database} if payload.database else {"schema": schema_name, "table": table_name})
+                columns = [CatalogColumn(name=str(item.get("name") or item.get("column_name") or item.get("COLUMN_NAME")), data_type=str(item.get("data_type") or item.get("type") or item.get("DATA_TYPE") or "unknown"), comment=item.get("comment") or item.get("COLUMN_COMMENT"), nullable=str(item.get("nullable", "YES")).upper() not in ("NO", "FALSE", "0")) for item in rows_from_result(columns_raw)]
+                tables.append(CatalogTable(name=table_name, comment=table_item.get("comment") or table_item.get("TABLE_COMMENT"), columns=columns))
+            schemas.append(CatalogSchema(name=schema_name, tables=tables))
+        relationships: list[dict[str, str]] = []
+        try:
+            relationship_rows = rows_from_result(await call_mcp(endpoint, payload.token, payload.tool_map, "relationships", {"database": payload.database} if payload.database else {}))
+            for item in relationship_rows:
+                source = item.get("from") or item.get("source") or item.get("source_column")
+                target = item.get("to") or item.get("target") or item.get("target_column")
+                if source and target:
+                    relationships.append({"from": str(source), "to": str(target), "type": str(item.get("type") or "relationship")})
+        except RuntimeError:
+            pass
+        return TidbCatalog(database=payload.database or "tidb", schemas=schemas, relationships=relationships, source=endpoint, collected_at=now_iso())
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"MCP introspection failed: {exc.__class__.__name__}") from exc
+
+
+def make_dataset_from_file(path: Path, dataset_id: str, kind: str, display_name: str | None = None) -> Dataset:
+    try:
+        if kind == "csv":
+            import pandas as pd
+            frame = pd.read_csv(path, nrows=1000)
+            with path.open("r", encoding="utf-8", errors="ignore") as source:
+                rows = sum(1 for _ in source) - 1
+        else:
+            import pandas as pd
+            frame = pd.read_parquet(path)
+            rows = len(frame)
+    except ImportError as exc:
+        raise HTTPException(503, "CSV/Parquet analysis dependencies are not installed") from exc
+    except Exception as exc:
+        raise HTTPException(400, f"cannot read dataset: {exc}") from exc
+    return Dataset(id=dataset_id, name=display_name or path.name, kind=kind, path=str(path), rows=max(rows, 0), columns=[{"name": str(column), "type": str(dtype)} for column, dtype in frame.dtypes.items()], created_at=now_iso())
+
+
+def allowed_local_path(path: Path) -> bool:
+    roots = [Path(item).expanduser().resolve() for item in os.getenv("DATASET_ALLOWED_ROOTS", str(Path.cwd())).split(os.pathsep) if item]
+    resolved = path.expanduser().resolve()
+    return any(resolved == root or root in resolved.parents for root in roots)
+
+
+def register_dataset(path: Path, display_name: str | None = None) -> Dataset:
+    suffix = path.suffix.lower()
+    if suffix not in (".csv", ".parquet"):
+        raise HTTPException(415, "only CSV and Parquet datasets are supported")
+    dataset_id = f"ds-{uuid4().hex[:10]}"
+    dataset = make_dataset_from_file(path, dataset_id, suffix[1:], display_name)
+    DATASETS[dataset_id] = dataset
+    return dataset
+
+
+def dataset_query(dataset: Dataset, question: str) -> tuple[str, list[str], list[list[Any]]]:
+    try:
+        import duckdb
+    except ImportError as exc:
+        raise HTTPException(503, "DuckDB is not installed") from exc
+    view_name = re.sub(r"[^a-zA-Z0-9_]", "_", Path(dataset.name).stem) or "dataset"
+    connection = duckdb.connect()
+    reader = "read_csv_auto" if dataset.kind == "csv" else "read_parquet"
+    escaped_path = dataset.path.replace("'", "''")
+    connection.execute(f'CREATE OR REPLACE VIEW "{view_name}" AS SELECT * FROM {reader}(\'{escaped_path}\')')
+    columns = [item[0] for item in connection.execute(f'DESCRIBE "{view_name}"').fetchall()]
+    numeric = [item[0] for item in connection.execute(f'DESCRIBE "{view_name}"').fetchall() if any(token in item[1].upper() for token in ("INT", "DECIMAL", "DOUBLE", "FLOAT", "REAL"))]
+    date_col = next((column for column in columns if any(token in column.lower() for token in ("date", "time", "created", "day"))), None)
+    if date_col and numeric:
+        sql = f'SELECT "{date_col}", SUM("{numeric[0]}") AS total_value FROM "{view_name}" GROUP BY "{date_col}" ORDER BY "{date_col}" LIMIT 100'
+    else:
+        sql = f'SELECT * FROM "{view_name}" LIMIT 100'
+    result = connection.execute(sql).fetchall()
+    return sql, [description[0] for description in connection.description], [list(row) for row in result]
 
 
 @app.get("/health", tags=["system"])
@@ -83,12 +392,52 @@ def workbench_summary() -> dict[str, Any]:
     return {"metrics": {"open_incidents": len(open_incidents), "critical_incidents": sum(i.severity == "P1" for i in open_incidents), "managed_assets": len(ASSETS), "query_success_rate": 98.6}, "incidents": [i.model_dump() for i in open_incidents[:3]], "recent_queries": list(OPERATIONS.values())[-5:]}
 
 
+@app.post("/api/v1/tidb/mcp/introspect", response_model=TidbCatalog, tags=["tidb"])
+async def tidb_mcp_introspect(payload: TidbMcpIntrospectRequest) -> TidbCatalog:
+    global CATALOG, MCP_CONNECTION
+    CATALOG = await introspect_mcp(payload)
+    effective_endpoint = payload.endpoint or os.getenv("TIDB_MCP_ENDPOINT", "").strip()
+    MCP_CONNECTION = payload.model_copy(update={"endpoint": effective_endpoint})
+    return CATALOG
+
+
+@app.get("/api/v1/tidb/catalog", response_model=TidbCatalog, tags=["tidb"])
+def tidb_catalog() -> TidbCatalog:
+    return CATALOG
+
+
 @app.post("/api/v1/query/conversations", response_model=QueryOperation, status_code=202, tags=["query"])
-def submit_query(payload: QueryRequest) -> QueryOperation:
+async def submit_query(payload: QueryRequest) -> QueryOperation:
     op_id = f"op-{uuid4().hex[:10]}"
-    q = payload.question
-    sql = "SELECT stat_date, SUM(gmv) AS gmv FROM ads_sales_daily WHERE stat_date >= CURRENT_DATE - INTERVAL '30 days' GROUP BY stat_date ORDER BY stat_date"
-    operation = QueryOperation(operation_id=op_id, status="completed", question=q, sql=sql, answer="近30天销售额总体保持平稳，最近一天 GMV 为 128.6 万。", columns=["stat_date", "gmv"], rows=[["2026-08-17", 1213000], ["2026-08-18", 1286000]], evidence=[{"type": "asset", "label": "ads_sales_daily", "ref": "asset-sales"}, {"type": "policy", "label": "经营分析数据权限", "ref": "policy-sales-read"}], created_at=now_iso())
+    reject_dangerous_intent(payload.question)
+    sql = await model_sql(payload.question, CATALOG)
+    sql = safe_select(sql)
+    rows: list[list[Any]] = [["2026-08-17", 1213000], ["2026-08-18", 1286000]]
+    columns = ["stat_date", "total_value"]
+    answer = "已基于当前数据目录生成只读查询。请核对指标口径和时间范围后使用结果。"
+    active_mcp = payload.mcp_endpoint or (MCP_CONNECTION.endpoint if MCP_CONNECTION else None)
+    source = "tidb-mcp" if active_mcp and active_mcp not in ("demo://tidb", "demo") else "demo"
+    if payload.source_type == "dataset" and payload.dataset_ids:
+        dataset = DATASETS.get(payload.dataset_ids[0])
+        if not dataset:
+            raise HTTPException(404, "dataset not found")
+        sql, columns, rows = dataset_query(dataset, payload.question)
+        source = "duckdb"
+    elif active_mcp and active_mcp not in ("demo://tidb", "demo"):
+        try:
+            token = MCP_CONNECTION.token if MCP_CONNECTION and MCP_CONNECTION.endpoint == active_mcp else None
+            tool_map = MCP_CONNECTION.tool_map if MCP_CONNECTION and MCP_CONNECTION.endpoint == active_mcp else {}
+            raw = await call_mcp(active_mcp, token, tool_map, "query", {"sql": sql})
+            records = rows_from_result(raw)
+            if records:
+                columns = list(records[0].keys())
+                rows = [[record.get(column) for column in columns] for record in records[:1000]]
+            answer = "TiDB MCP 已执行查询，结果已通过只读策略返回。"
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(502, f"TiDB MCP query failed: {exc.__class__.__name__}") from exc
+    operation = QueryOperation(operation_id=op_id, status="completed", question=payload.question, sql=sql, answer=answer, columns=columns, rows=rows, chart=chart_spec(columns, rows, payload.question), evidence=[{"type": "catalog", "label": CATALOG.database, "ref": CATALOG.source}, {"type": "policy", "label": "read-only SQL guard", "ref": "sql-guard-v1"}, {"type": "engine", "label": source, "ref": source}], created_at=now_iso())
     OPERATIONS[op_id] = operation
     return operation
 
@@ -98,6 +447,42 @@ def query_status(operation_id: str) -> QueryOperation:
     operation = OPERATIONS.get(operation_id)
     if not operation:
         raise HTTPException(404, "query operation not found")
+    return operation
+
+
+@app.post("/api/v1/datasets/upload", response_model=Dataset, status_code=201, tags=["datasets"])
+async def upload_dataset(file: UploadFile = File(...)) -> Dataset:
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in (".csv", ".parquet"):
+        raise HTTPException(415, "only .csv and .parquet files are supported")
+    target = DATASET_DIR / f"{uuid4().hex}{suffix}"
+    with target.open("wb") as output:
+        shutil.copyfileobj(file.file, output)
+    return register_dataset(target, Path(file.filename or target.name).name)
+
+
+@app.post("/api/v1/datasets/local-directory", response_model=list[Dataset], tags=["datasets"])
+def scan_local_directory(payload: LocalDirectoryRequest) -> list[Dataset]:
+    directory = Path(payload.path).expanduser()
+    if not directory.exists() or not directory.is_dir() or not allowed_local_path(directory):
+        raise HTTPException(403, "directory is not allowed")
+    files = [item for item in directory.rglob("*") if item.is_file() and item.suffix.lower() in (".csv", ".parquet")][:100]
+    return [register_dataset(item) for item in files]
+
+
+@app.get("/api/v1/datasets", response_model=list[Dataset], tags=["datasets"])
+def datasets() -> list[Dataset]:
+    return list(DATASETS.values())
+
+
+@app.post("/api/v1/datasets/analyze", response_model=QueryOperation, status_code=202, tags=["datasets"])
+def analyze_dataset(payload: DatasetAnalyzeRequest) -> QueryOperation:
+    dataset = DATASETS.get(payload.dataset_ids[0])
+    if not dataset:
+        raise HTTPException(404, "dataset not found")
+    sql, columns, rows = dataset_query(dataset, payload.question)
+    operation = QueryOperation(operation_id=f"op-{uuid4().hex[:10]}", status="completed", question=payload.question, sql=sql, answer="已完成文件数据分析，结果可继续转为报表或任务。", columns=columns, rows=rows, chart=chart_spec(columns, rows, payload.question), evidence=[{"type": "dataset", "label": dataset.name, "ref": dataset.id}, {"type": "engine", "label": "DuckDB", "ref": "duckdb"}], created_at=now_iso())
+    OPERATIONS[operation.operation_id] = operation
     return operation
 
 

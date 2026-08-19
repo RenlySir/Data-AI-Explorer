@@ -9,8 +9,15 @@ services:
       - "${BACKEND_PORT:-8080}:8080"
     volumes:
       - ./backend:/workspace/backend
+      - ./data:/workspace/data:ro
     environment:
       PYTHONUNBUFFERED: "1"
+      DATASET_ALLOWED_ROOTS: ${DATASET_ALLOWED_ROOTS:-/workspace/data}
+      DATASET_STORAGE_DIR: ${DATASET_STORAGE_DIR:-/tmp/aegis-datasets}
+      TIDB_MCP_ENDPOINT: ${TIDB_MCP_ENDPOINT:-}
+      MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-}
+      MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-}
+      MODEL_GATEWAY_MODEL: ${MODEL_GATEWAY_MODEL:-}
     depends_on:
       postgres:
         condition: service_healthy
