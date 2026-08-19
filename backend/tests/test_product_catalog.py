@@ -73,6 +73,10 @@ class ProductCatalogApiTest(unittest.TestCase):
         detail = self.client.get("/api/v1/product/features/sql-advice")
         self.assertEqual(detail.status_code, 200)
         self.assertEqual(detail.json()["target_page"], "sql-optimizer")
+        datasource = self.client.get("/api/v1/product/features/admin-datasource")
+        self.assertEqual(datasource.status_code, 200)
+        self.assertEqual(datasource.json()["delivery_state"], "available")
+        self.assertEqual(datasource.json()["target_page"], "datasources")
         self.assertEqual(self.client.get("/api/v1/product/features/not-found").status_code, 404)
         self.assertEqual(self.client.get("/api/v1/product/modules?state=unknown").status_code, 422)
 

@@ -61,6 +61,7 @@ import "./capabilities.css";
 import "./polish.css";
 import "./chatbi.css";
 import "./models.css";
+import "./datasources.css";
 
 type Page =
   | "workbench"
@@ -73,6 +74,7 @@ type Page =
   | "scenarios"
   | "knowledge"
   | "models"
+  | "datasources"
   | "settings";
 const ROUTABLE_PAGES: Page[] = [
   "workbench",
@@ -85,6 +87,7 @@ const ROUTABLE_PAGES: Page[] = [
   "scenarios",
   "knowledge",
   "models",
+  "datasources",
   "settings",
 ];
 function pageFromLocation(): Page {
@@ -561,7 +564,13 @@ function App() {
         ["scenarios", "场景中心", Workflow],
       ],
     ],
-    ["平台管理", [["models", "模型接入", CloudCog]]],
+    [
+      "平台管理",
+      [
+        ["models", "模型接入", CloudCog],
+        ["datasources", "数据源管理", Database],
+      ],
+    ],
   ];
   const nav = navGroups.flatMap(([, items]) => items);
   const activeGroup = navGroups.find(([, items]) =>
@@ -761,6 +770,9 @@ function App() {
             onComplete={() => setModelOnboarding(false)}
             enterWorkspace={() => navigatePage("workbench")}
           />
+        )}{" "}
+        {page === "datasources" && (
+          <DataSourceManagementPage setPage={navigatePage} />
         )}{" "}
         {page === "sql-optimizer" && <SQLOptimizerPage />}{" "}
         {page === "assets" && <AssetsV2 setPage={navigatePage} />}{" "}
@@ -1290,6 +1302,581 @@ function Metric({
       <strong className={tone}>{value}</strong>
       <small>{hint}</small>
     </div>
+  );
+}
+
+type DataSourceFilter = "all" | "database" | "file";
+
+function DataSourceManagementPage({
+  setPage,
+}: {
+  setPage: (page: Page) => void;
+}) {
+  const [sources, setSources] = useState<DataSourceRecord[]>([]);
+  const [filter, setFilter] = useState<DataSourceFilter>("all");
+  const [search, setSearch] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [addKind, setAddKind] = useState<"database" | "file">("database");
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<DataSourceRecord | null>(
+    null,
+  );
+  const [form, setForm] = useState({
+    name: "",
+    kind: "tidb" as "tidb" | "mysql",
+    host: "",
+    port: "4000",
+    database: "",
+    username: "root",
+    password: "",
+  });
+
+  const loadSources = async () => {
+    const items = await api<DataSourceRecord[]>("/chatbi/datasources");
+    setSources(items);
+    return items;
+  };
+  useEffect(() => {
+    loadSources().catch((reason) =>
+      setError(reason instanceof Error ? reason.message : "数据源加载失败"),
+    );
+  }, []);
+  const addDatabase = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy("create");
+    setError("");
+    setMessage("");
+    try {
+      const item = await api<DataSourceRecord>("/chatbi/datasources", {
+        method: "POST",
+        body: JSON.stringify({
+          ...form,
+          port: Number(form.port),
+          test_on_create: true,
+        }),
+      });
+      await loadSources();
+      setForm({
+        name: "",
+        kind: "tidb",
+        host: "",
+        port: "4000",
+        database: "",
+        username: "root",
+        password: "",
+      });
+      if (item.status === "ready") {
+        setShowAdd(false);
+        setMessage(`${item.name} 已添加，连接测试通过`);
+      } else setError(item.last_error || "数据源已保存，但连接测试未通过");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "数据源添加失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const uploadFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setBusy("upload");
+    setError("");
+    setMessage("");
+    const body = new FormData();
+    body.append("file", file);
+    try {
+      const item = await api<DataSourceRecord>("/chatbi/datasources/upload", {
+        method: "POST",
+        headers: {},
+        body,
+      });
+      await loadSources();
+      setShowAdd(false);
+      setMessage(`${item.name} 已添加，共 ${item.row_count || 0} 行`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "文件数据源上传失败");
+    } finally {
+      setBusy("");
+      event.target.value = "";
+    }
+  };
+  const testSource = async (item: DataSourceRecord) => {
+    setBusy(item.id);
+    setError("");
+    setMessage("");
+    try {
+      const updated = await api<DataSourceRecord>(
+        `/chatbi/datasources/${item.id}/test`,
+        { method: "POST" },
+      );
+      await loadSources();
+      if (updated.status === "ready") setMessage(`${updated.name} 连接正常`);
+      else setError(updated.last_error || "连接测试失败");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "连接测试失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const removeSource = async () => {
+    if (!deleteTarget) return;
+    setBusy(deleteTarget.id);
+    try {
+      const response = await fetch(
+        `${API_BASE}/chatbi/datasources/${deleteTarget.id}`,
+        { method: "DELETE" },
+      );
+      if (!response.ok) throw new Error((await response.text()) || "删除失败");
+      await loadSources();
+      setMessage(`${deleteTarget.name} 已删除`);
+      setDeleteTarget(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "数据源删除失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const openQueryWithSource = (item: DataSourceRecord) => {
+    window.localStorage.setItem("chatbi-preferred-source", item.id);
+    setPage("query");
+  };
+  const visible = sources.filter((item) => {
+    const matchesType =
+      filter === "all" ||
+      (filter === "database" ? item.kind !== "csv" : item.kind === "csv");
+    const haystack =
+      `${item.name} ${item.kind} ${item.database || ""} ${item.host || ""}`.toLowerCase();
+    return matchesType && haystack.includes(search.trim().toLowerCase());
+  });
+  const readyCount = sources.filter((item) => item.status === "ready").length;
+  const databaseCount = sources.filter((item) => item.kind !== "csv").length;
+  const fileCount = sources.filter((item) => item.kind === "csv").length;
+  return (
+    <section className="content datasource-page">
+      <div className="section-head">
+        <div>
+          <span className="eyebrow">数据库 · 文件 · 连接测试 · ChatBI</span>
+          <h1>数据源管理</h1>
+          <p className="section-subtitle">
+            集中添加企业数据库和文件数据，连接成功后可直接用于智能问数。
+          </p>
+        </div>
+        <button className="primary" onClick={() => setShowAdd(true)}>
+          <Plus size={16} />
+          添加数据源
+        </button>
+      </div>
+      {message && (
+        <div className="notice">
+          <CheckCircle2 size={15} />
+          {message}
+          <button onClick={() => setMessage("")} aria-label="关闭提示">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+      {error && <div className="error-banner">{error}</div>}
+      <div className="datasource-metrics">
+        <div>
+          <span className="source-metric-icon ready">
+            <CheckCircle2 size={18} />
+          </span>
+          <span>
+            <b>{readyCount}</b>
+            <small>可用数据源</small>
+          </span>
+        </div>
+        <div>
+          <span className="source-metric-icon">
+            <Database size={18} />
+          </span>
+          <span>
+            <b>{databaseCount}</b>
+            <small>数据库连接</small>
+          </span>
+        </div>
+        <div>
+          <span className="source-metric-icon file">
+            <FileSpreadsheet size={18} />
+          </span>
+          <span>
+            <b>{fileCount}</b>
+            <small>文件数据源</small>
+          </span>
+        </div>
+      </div>
+      <div className="datasource-toolbar">
+        <div className="searchbar">
+          <Search size={17} />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="搜索名称、数据库或主机"
+          />
+        </div>
+        <div className="segmented datasource-filters">
+          {(["all", "database", "file"] as DataSourceFilter[]).map((id) => (
+            <button
+              key={id}
+              className={filter === id ? "active" : ""}
+              onClick={() => setFilter(id)}
+            >
+              {id === "all" ? "全部" : id === "database" ? "数据库" : "文件"}
+            </button>
+          ))}
+        </div>
+      </div>
+      {visible.length === 0 ? (
+        <div className="datasource-empty panel">
+          <Database size={34} />
+          <b>{sources.length ? "没有匹配的数据源" : "还没有数据源"}</b>
+          <span>
+            {sources.length
+              ? "调整搜索条件或类型筛选。"
+              : "添加 TiDB、MySQL、CSV 或 Parquet 后开始分析。"}
+          </span>
+          {!sources.length && (
+            <button className="primary" onClick={() => setShowAdd(true)}>
+              <Plus size={16} />
+              添加第一个数据源
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="datasource-grid">
+          {visible.map((item) => (
+            <article className="datasource-card panel" key={item.id}>
+              <div className="datasource-card-head">
+                <span className={`datasource-kind-icon ${item.kind}`}>
+                  <>
+                    {item.kind === "csv" ? (
+                      <FileSpreadsheet size={19} />
+                    ) : (
+                      <Database size={19} />
+                    )}
+                  </>
+                </span>
+                <div>
+                  <h3>{item.name}</h3>
+                  <span>
+                    {item.kind === "csv"
+                      ? "文件数据"
+                      : `${item.kind.toUpperCase()} 数据库`}
+                  </span>
+                </div>
+                <span
+                  className={`chip ${item.status === "ready" ? "success" : item.status === "error" ? "danger" : ""}`}
+                >
+                  {item.status === "ready"
+                    ? "可用"
+                    : item.status === "error"
+                      ? "连接失败"
+                      : "待测试"}
+                </span>
+              </div>
+              <div className="datasource-card-body">
+                {item.kind === "csv" ? (
+                  <>
+                    <span>
+                      <b>文件标识</b>
+                      {item.dataset_id}
+                    </span>
+                    <span>
+                      <b>数据规模</b>
+                      {item.row_count || 0} 行
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span>
+                      <b>数据库</b>
+                      {item.database}
+                    </span>
+                    <span>
+                      <b>连接地址</b>
+                      {item.host ? `${item.host}:${item.port}` : "演示连接"}
+                    </span>
+                    <span>
+                      <b>用户名</b>
+                      {item.username || "-"}
+                    </span>
+                    <span>
+                      <b>结构对象</b>
+                      {item.table_count} 个
+                    </span>
+                  </>
+                )}
+                {item.last_error && (
+                  <p className="datasource-card-error">{item.last_error}</p>
+                )}
+              </div>
+              <div className="datasource-card-actions">
+                {item.kind !== "csv" && item.host && (
+                  <button
+                    className="secondary"
+                    disabled={busy === item.id}
+                    onClick={() => void testSource(item)}
+                  >
+                    <RefreshCw size={14} />
+                    测试连接
+                  </button>
+                )}
+                <button
+                  className="primary"
+                  disabled={item.status !== "ready"}
+                  onClick={() => openQueryWithSource(item)}
+                >
+                  <MessageSquare size={14} />
+                  进入问数
+                </button>
+                {item.id !== "ds-demo-tidb" && (
+                  <button
+                    className="icon-button danger-button"
+                    disabled={busy === item.id}
+                    title="删除数据源"
+                    aria-label={`删除 ${item.name}`}
+                    onClick={() => setDeleteTarget(item)}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+      {showAdd && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowAdd(false);
+          }}
+        >
+          <div className="modal-card datasource-add-modal">
+            <div className="panel-head">
+              <div>
+                <span className="eyebrow">新建数据源</span>
+                <h3>选择添加方式</h3>
+              </div>
+              <button
+                className="icon-button"
+                onClick={() => setShowAdd(false)}
+                aria-label="关闭"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="datasource-add-tabs">
+              <button
+                className={addKind === "database" ? "active" : ""}
+                onClick={() => setAddKind("database")}
+              >
+                <Database size={18} />
+                <span>
+                  <b>连接数据库</b>
+                  <small>TiDB 或 MySQL</small>
+                </span>
+              </button>
+              <button
+                className={addKind === "file" ? "active" : ""}
+                onClick={() => setAddKind("file")}
+              >
+                <FileSpreadsheet size={18} />
+                <span>
+                  <b>上传文件</b>
+                  <small>CSV 或 Parquet</small>
+                </span>
+              </button>
+            </div>
+            {addKind === "database" ? (
+              <form className="datasource-form" onSubmit={addDatabase}>
+                <label>
+                  数据库类型
+                  <select
+                    value={form.kind}
+                    onChange={(event) => {
+                      const kind = event.target.value as "tidb" | "mysql";
+                      setForm({
+                        ...form,
+                        kind,
+                        port: kind === "tidb" ? "4000" : "3306",
+                      });
+                    }}
+                  >
+                    <option value="tidb">TiDB</option>
+                    <option value="mysql">MySQL</option>
+                  </select>
+                </label>
+                <label>
+                  连接名称
+                  <input
+                    required
+                    value={form.name}
+                    onChange={(event) =>
+                      setForm({ ...form, name: event.target.value })
+                    }
+                    placeholder="例如：经营分析库"
+                  />
+                </label>
+                <div className="form-row">
+                  <label>
+                    主机地址
+                    <input
+                      required
+                      value={form.host}
+                      onChange={(event) =>
+                        setForm({ ...form, host: event.target.value })
+                      }
+                      placeholder="db.internal"
+                    />
+                  </label>
+                  <label>
+                    端口
+                    <input
+                      required
+                      type="number"
+                      value={form.port}
+                      onChange={(event) =>
+                        setForm({ ...form, port: event.target.value })
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="form-row">
+                  <label>
+                    数据库
+                    <input
+                      required
+                      value={form.database}
+                      onChange={(event) =>
+                        setForm({ ...form, database: event.target.value })
+                      }
+                      placeholder="analytics"
+                    />
+                  </label>
+                  <label>
+                    用户名
+                    <input
+                      required
+                      value={form.username}
+                      onChange={(event) =>
+                        setForm({ ...form, username: event.target.value })
+                      }
+                    />
+                  </label>
+                </div>
+                <label>
+                  密码
+                  <input
+                    type="password"
+                    value={form.password}
+                    onChange={(event) =>
+                      setForm({ ...form, password: event.target.value })
+                    }
+                    placeholder="留空表示无密码"
+                    autoComplete="new-password"
+                  />
+                </label>
+                <div className="model-security-note">
+                  <ShieldCheck size={16} />
+                  <span>
+                    <b>使用只读账号</b>
+                    <small>
+                      密码与连接信息分开保存，页面和接口不会回显密码。
+                    </small>
+                  </span>
+                </div>
+                <div className="modal-actions">
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => setShowAdd(false)}
+                  >
+                    取消
+                  </button>
+                  <button
+                    className="primary"
+                    disabled={busy === "create"}
+                    type="submit"
+                  >
+                    {busy === "create" ? (
+                      <>
+                        <Clock3 size={15} />
+                        连接测试中…
+                      </>
+                    ) : (
+                      <>
+                        <PlugZap size={15} />
+                        保存并测试连接
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="datasource-file-upload">
+                <span className="upload-illustration">
+                  <UploadCloud size={28} />
+                </span>
+                <b>上传 CSV 或 Parquet</b>
+                <p>系统读取字段和行数，文件注册后可直接用于 ChatBI 分析。</p>
+                <label className="primary file-button">
+                  {busy === "upload" ? (
+                    <>
+                      <Clock3 size={16} />
+                      处理中…
+                    </>
+                  ) : (
+                    <>
+                      <FileUp size={16} />
+                      选择文件
+                    </>
+                  )}
+                  <input
+                    type="file"
+                    disabled={busy === "upload"}
+                    accept=".csv,.parquet"
+                    onChange={uploadFile}
+                  />
+                </label>
+                <small>支持 UTF-8 CSV 和标准 Parquet 文件</small>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {deleteTarget && (
+        <div className="modal-backdrop">
+          <div className="modal-card confirm-delete-modal">
+            <span className="delete-warning-icon">
+              <Trash2 size={22} />
+            </span>
+            <h3>删除数据源？</h3>
+            <p>
+              将删除“{deleteTarget.name}
+              ”的连接记录。已生成的历史问数结果不会自动删除。
+            </p>
+            <div className="modal-actions">
+              <button
+                className="secondary"
+                onClick={() => setDeleteTarget(null)}
+              >
+                取消
+              </button>
+              <button
+                className="danger-action"
+                disabled={busy === deleteTarget.id}
+                onClick={() => void removeSource()}
+              >
+                确认删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -2280,7 +2867,9 @@ function QueryV2({
   const [module, setModule] = useState<QueryModule>("chatbi");
   const [datasources, setDatasources] = useState<DataSourceRecord[]>([]);
   const [reports, setReports] = useState<DashboardReport[]>([]);
-  const [sourceId, setSourceId] = useState("");
+  const [sourceId, setSourceId] = useState(
+    () => window.localStorage.getItem("chatbi-preferred-source") || "",
+  );
   const [question, setQuestion] = useState(initialQuestion);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -2301,13 +2890,16 @@ function QueryV2({
     try {
       const data = await api<DataSourceRecord[]>("/chatbi/datasources");
       setDatasources(data);
-      setSourceId((current) =>
-        current && data.some((item) => item.id === current)
-          ? current
-          : data.find((item) => item.status === "ready")?.id ||
-            data[0]?.id ||
-            "",
-      );
+      setSourceId((current) => {
+        const next =
+          current && data.some((item) => item.id === current)
+            ? current
+            : data.find((item) => item.status === "ready")?.id ||
+              data[0]?.id ||
+              "";
+        if (next) window.localStorage.setItem("chatbi-preferred-source", next);
+        return next;
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "数据源加载失败");
     }
@@ -2614,7 +3206,13 @@ function QueryV2({
                 数据源
                 <select
                   value={sourceId}
-                  onChange={(event) => setSourceId(event.target.value)}
+                  onChange={(event) => {
+                    setSourceId(event.target.value);
+                    window.localStorage.setItem(
+                      "chatbi-preferred-source",
+                      event.target.value,
+                    );
+                  }}
                 >
                   {datasources.length === 0 && (
                     <option value="">暂无可用数据源</option>

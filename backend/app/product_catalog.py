@@ -16,6 +16,7 @@ TargetPage = Literal[
     "sql-optimizer",
     "scenarios",
     "models",
+    "datasources",
 ]
 
 
@@ -85,7 +86,7 @@ PRODUCT_MODULES = [
         summary="从数据结构理解、自然语言问题到安全 SQL、复核结果和 BI 报表的完整分析链路。",
         owner_role="数据产品负责人",
         features=[
-            feature("query-datasources", "数据源管理", "统一添加和测试 TiDB、MySQL、CSV 与 Parquet 数据源。", ["数据分析师", "数据工程师", "DBA"], "available", "query", "添加数据源", ["连接参数或文件", "只读凭证"], ["可用数据源", "结构与行数摘要"], ["凭证不回显", "私网或白名单主机", "连接默认只读"], ["smart-query-team"], ["GET/POST /api/v1/chatbi/datasources"]),
+            feature("query-datasources", "数据源管理", "统一添加和测试 TiDB、MySQL、CSV 与 Parquet 数据源。", ["数据分析师", "数据工程师", "DBA"], "available", "query", "添加数据源", ["连接参数或文件", "只读凭证"], ["可用数据源", "结构与行数摘要"], ["凭证不回显", "私网或白名单主机", "连接默认只读"], ["smart-query-team"], ["GET/POST/DELETE /api/v1/chatbi/datasources", "POST /api/v1/chatbi/datasources/{id}/test", "POST /api/v1/chatbi/datasources/upload"]),
             feature("query-chatbi", "ChatBI 对话分析", "选择数据源后将自然语言转换为 SQL，执行并自动选择 BI 图表。", ["业务用户", "数据分析师"], "available", "query", "开始 ChatBI", ["数据源", "自然语言问题"], ["只读 SQL", "查询结果", "ECharts 图表"], ["SQL 只读拦截", "限制返回行数", "保留执行证据"], ["smart-query-team"], ["POST /api/v1/chatbi/query"]),
             feature("query-dashboard", "认可报表大屏", "将用户核验认可的 ChatBI 结果沉淀为可复用经营大屏。", ["业务用户", "管理者"], "available", "query", "查看大屏", ["已完成分析", "认可动作"], ["大屏报表", "来源与认可人"], ["仅认可结果可加入", "保留原问题和数据源", "支持移除"], ["smart-query-team"], ["GET/POST /api/v1/chatbi/reports"]),
             feature("query-tidb-mcp", "TiDB MCP 元数据连接", "采集 Schema、表、字段、Comment 与关系。", ["数据工程师", "DBA"], "demo", "catalog", "采集结构", ["MCP Endpoint", "只读凭证引用"], ["元数据目录", "关系边"], READ_ONLY, ["smart-query-team"], ["POST /api/v1/tidb/mcp/introspect"]),
@@ -204,7 +205,7 @@ PRODUCT_MODULES = [
         summary="管理企业数据源、模型、连接器、身份权限、策略、审计和平台健康。",
         owner_role="平台管理员",
         features=[
-            feature("admin-datasource", "数据源与连接测试", "登记 TiDB/数据库连接并探测网络和只读权限。", ["管理员", "DBA"], "demo", "catalog", "配置连接", ["Endpoint", "凭证引用", "采集范围"], ["连接状态", "能力清单"], ["不回显密钥", "只读账号"]),
+            feature("admin-datasource", "数据源管理与连接测试", "手动添加 TiDB、MySQL、CSV 或 Parquet 数据源并验证可用性。", ["管理员", "DBA", "数据分析师"], "available", "datasources", "添加数据源", ["数据库连接参数或文件", "只读凭证"], ["连接状态", "结构/行数摘要", "ChatBI 可选数据源"], ["凭证不回显", "只读账号", "删除二次确认"], api_refs=["GET/POST/DELETE /api/v1/chatbi/datasources", "POST /api/v1/chatbi/datasources/{id}/test", "POST /api/v1/chatbi/datasources/upload"]),
             feature("admin-model", "大模型接入与默认路由", "注册公有 OpenAI-compatible API、Ollama、vLLM 和企业自建模型，并选择平台默认模型。", ["管理员", "AI 工程师"], "available", "models", "添加模型", ["Provider", "Endpoint", "模型 ID", "凭证"], ["连接状态", "默认模型", "可用能力"], ["凭证不回显", "私网/HTTPS 主机策略", "连接测试后才能启用"], api_refs=["GET/POST /api/v1/models/connections"]),
             feature("admin-connectors", "企业系统连接器", "管理监控、日志、调度、Git、工单与执行平台 Adapter。", ["管理员", "SRE"], "planned", None, "待接入", ["连接器配置", "权限范围"], ["健康状态", "能力与动作 Schema"], ["最小权限", "超时与熔断", "调用审计"]),
             feature("admin-iam", "租户、SSO 与 RBAC/ABAC", "管理用户、角色、工作区和资源/环境策略。", ["管理员", "安全"], "planned", None, "待接入", ["身份源", "角色", "策略"], ["有效权限", "策略版本"], ["默认拒绝", "生产最小权限"]),
