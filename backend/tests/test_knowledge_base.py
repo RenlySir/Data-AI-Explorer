@@ -58,6 +58,45 @@ class KnowledgeBaseApiTest(unittest.TestCase):
         self.assertTrue(payload["citations"])
         self.assertEqual(payload["citations"][0]["document_title"], "订单系统应急预案")
         self.assertIn("仅基于列出的知识片段", payload["answer"])
+        history = self.client.get(f"/api/v1/knowledge-bases/{knowledge_base['id']}/queries")
+        self.assertEqual(history.status_code, 200)
+        self.assertEqual(history.json()[0]["query_id"], payload["query_id"])
+        feedback = self.client.post(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/queries/{payload['query_id']}/feedback",
+            json={"helpful": True, "comment": "引用准确"},
+        )
+        self.assertEqual(feedback.status_code, 201, feedback.text)
+        self.assertTrue(feedback.json()["helpful"])
+        invalid_feedback = self.client.post(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/queries/kbq-missing/feedback",
+            json={"helpful": False},
+        )
+        self.assertEqual(invalid_feedback.status_code, 404)
+        invalid_limit = self.client.get(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/queries?limit=0"
+        )
+        self.assertEqual(invalid_limit.status_code, 422)
+
+    def test_document_chunks_can_be_reviewed(self) -> None:
+        knowledge_base = self.create_base()
+        document = self.client.post(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/documents",
+            json={
+                "title": "分块检查文档",
+                "content": "第一段说明变更前检查。" * 30 + "\n\n" + "第二段说明变更后验证。" * 30,
+            },
+        )
+        self.assertEqual(document.status_code, 201, document.text)
+        chunks = self.client.get(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/documents/{document.json()['id']}/chunks"
+        )
+        self.assertEqual(chunks.status_code, 200, chunks.text)
+        self.assertGreater(len(chunks.json()), 1)
+        self.assertEqual(chunks.json()[0]["position"], 0)
+        missing = self.client.get(
+            f"/api/v1/knowledge-bases/{knowledge_base['id']}/documents/doc-missing/chunks"
+        )
+        self.assertEqual(missing.status_code, 404)
 
     def test_upload_accepts_supported_text_and_rejects_binary_type(self) -> None:
         knowledge_base = self.create_base()

@@ -104,9 +104,25 @@ class KnowledgeQueryResult(BaseModel):
     generated_at: str
 
 
+class KnowledgeFeedbackCreate(BaseModel):
+    helpful: bool
+    comment: str = Field(default="", max_length=500)
+
+
+class KnowledgeFeedback(BaseModel):
+    id: str
+    knowledge_base_id: str
+    query_id: str
+    helpful: bool
+    comment: str
+    created_at: str
+
+
 KNOWLEDGE_BASES: dict[str, KnowledgeBaseRecord] = {}
 KNOWLEDGE_DOCUMENTS: dict[str, KnowledgeDocument] = {}
 KNOWLEDGE_CHUNKS: dict[str, KnowledgeChunk] = {}
+KNOWLEDGE_QUERIES: dict[str, KnowledgeQueryResult] = {}
+KNOWLEDGE_FEEDBACK: dict[str, KnowledgeFeedback] = {}
 
 
 def _normalize_text(content: str) -> str:
@@ -244,6 +260,54 @@ def list_documents(knowledge_base_id: str) -> list[KnowledgeDocument]:
     ]
 
 
+def list_document_chunks(knowledge_base_id: str, document_id: str) -> list[KnowledgeChunk]:
+    if knowledge_base_id not in KNOWLEDGE_BASES:
+        raise KeyError(knowledge_base_id)
+    document = KNOWLEDGE_DOCUMENTS.get(document_id)
+    if not document or document.knowledge_base_id != knowledge_base_id:
+        raise LookupError(document_id)
+    return sorted(
+        [
+            chunk
+            for chunk in KNOWLEDGE_CHUNKS.values()
+            if chunk.knowledge_base_id == knowledge_base_id and chunk.document_id == document_id
+        ],
+        key=lambda item: item.position,
+    )
+
+
+def list_queries(knowledge_base_id: str, limit: int = 20) -> list[KnowledgeQueryResult]:
+    if knowledge_base_id not in KNOWLEDGE_BASES:
+        raise KeyError(knowledge_base_id)
+    return [
+        item
+        for item in reversed(list(KNOWLEDGE_QUERIES.values()))
+        if item.knowledge_base_id == knowledge_base_id
+    ][:limit]
+
+
+def add_feedback(
+    knowledge_base_id: str,
+    query_id: str,
+    payload: KnowledgeFeedbackCreate,
+) -> KnowledgeFeedback:
+    if knowledge_base_id not in KNOWLEDGE_BASES:
+        raise KeyError(knowledge_base_id)
+    query = KNOWLEDGE_QUERIES.get(query_id)
+    if not query or query.knowledge_base_id != knowledge_base_id:
+        raise LookupError(query_id)
+    feedback = KnowledgeFeedback(
+        id=f"feedback-{uuid4().hex[:10]}",
+        knowledge_base_id=knowledge_base_id,
+        query_id=query_id,
+        helpful=payload.helpful,
+        comment=payload.comment,
+        created_at=now_iso(),
+    )
+    KNOWLEDGE_FEEDBACK[feedback.id] = feedback
+    return feedback
+
+
 def query_knowledge_base(knowledge_base_id: str, payload: KnowledgeQuery) -> KnowledgeQueryResult:
     knowledge_base = KNOWLEDGE_BASES.get(knowledge_base_id)
     if not knowledge_base:
@@ -280,7 +344,7 @@ def query_knowledge_base(knowledge_base_id: str, payload: KnowledgeQuery) -> Kno
     else:
         answer = "当前知识库中没有检索到足够相关的内容。请补充资料、调整关键词，或选择其他知识库后重试。"
         confidence = "low"
-    return KnowledgeQueryResult(
+    result = KnowledgeQueryResult(
         query_id=f"kbq-{uuid4().hex[:10]}",
         knowledge_base_id=knowledge_base_id,
         question=payload.question,
@@ -290,6 +354,8 @@ def query_knowledge_base(knowledge_base_id: str, payload: KnowledgeQuery) -> Kno
         citations=citations,
         generated_at=now_iso(),
     )
+    KNOWLEDGE_QUERIES[result.query_id] = result
+    return result
 
 
 def _bootstrap_demo() -> None:

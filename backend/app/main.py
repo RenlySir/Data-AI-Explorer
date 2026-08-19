@@ -43,13 +43,19 @@ from app.knowledge_base import (
     KNOWLEDGE_BASES,
     KnowledgeBaseCreate,
     KnowledgeBaseRecord,
+    KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeDocumentCreate,
+    KnowledgeFeedback,
+    KnowledgeFeedbackCreate,
     KnowledgeQuery,
     KnowledgeQueryResult,
+    add_feedback,
     add_document,
     create_knowledge_base,
+    list_document_chunks,
     list_documents,
+    list_queries,
     query_knowledge_base,
 )
 
@@ -636,6 +642,16 @@ def get_knowledge_documents(knowledge_base_id: str) -> list[KnowledgeDocument]:
         raise HTTPException(404, "knowledge base not found") from exc
 
 
+@app.get("/api/v1/knowledge-bases/{knowledge_base_id}/documents/{document_id}/chunks", response_model=list[KnowledgeChunk], tags=["knowledge"])
+def get_knowledge_chunks(knowledge_base_id: str, document_id: str) -> list[KnowledgeChunk]:
+    try:
+        return list_document_chunks(knowledge_base_id, document_id)
+    except KeyError as exc:
+        raise HTTPException(404, "knowledge base not found") from exc
+    except LookupError as exc:
+        raise HTTPException(404, "knowledge document not found") from exc
+
+
 @app.post("/api/v1/knowledge-bases/{knowledge_base_id}/documents", response_model=KnowledgeDocument, status_code=201, tags=["knowledge"])
 def post_knowledge_document(knowledge_base_id: str, payload: KnowledgeDocumentCreate) -> KnowledgeDocument:
     try:
@@ -723,6 +739,24 @@ def post_knowledge_query(knowledge_base_id: str, payload: KnowledgeQuery) -> Kno
         return query_knowledge_base(knowledge_base_id, payload)
     except KeyError as exc:
         raise HTTPException(404, "knowledge base not found") from exc
+
+
+@app.get("/api/v1/knowledge-bases/{knowledge_base_id}/queries", response_model=list[KnowledgeQueryResult], tags=["knowledge"])
+def get_knowledge_queries(knowledge_base_id: str, limit: int = Query(20, ge=1, le=100)) -> list[KnowledgeQueryResult]:
+    try:
+        return list_queries(knowledge_base_id, limit)
+    except KeyError as exc:
+        raise HTTPException(404, "knowledge base not found") from exc
+
+
+@app.post("/api/v1/knowledge-bases/{knowledge_base_id}/queries/{query_id}/feedback", response_model=KnowledgeFeedback, status_code=201, tags=["knowledge"])
+def post_knowledge_feedback(knowledge_base_id: str, query_id: str, payload: KnowledgeFeedbackCreate) -> KnowledgeFeedback:
+    try:
+        return add_feedback(knowledge_base_id, query_id, payload)
+    except KeyError as exc:
+        raise HTTPException(404, "knowledge base not found") from exc
+    except LookupError as exc:
+        raise HTTPException(404, "knowledge query not found") from exc
 
 
 @app.get("/api/v1/aiops/sql-optimizer/versions", tags=["sql-optimizer"])

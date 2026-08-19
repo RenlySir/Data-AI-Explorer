@@ -198,6 +198,13 @@ type KnowledgeDocument = {
   tags: string[];
   updated_at: string;
 };
+type KnowledgeChunk = {
+  id: string;
+  document_id: string;
+  position: number;
+  text: string;
+  token_count: number;
+};
 type KnowledgeQueryResult = {
   query_id: string;
   question: string;
@@ -214,7 +221,14 @@ type KnowledgeQueryResult = {
     source_uri: string;
     tags: string[];
   }[];
+  knowledge_base_id: string;
   generated_at: string;
+};
+type KnowledgeFeedback = {
+  id: string;
+  query_id: string;
+  helpful: boolean;
+  comment: string;
 };
 const API_BASE = (
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api/v1"
@@ -310,12 +324,12 @@ function App() {
   const nav = [
     ["workbench", "工作台", LayoutDashboard],
     ["query", "智能问数", MessageSquare],
-    ["incidents", "AIOps 事件", Activity],
-    ["scenarios", "场景中心", Workflow],
     ["knowledge", "知识库", BookOpen],
-    ["sql-optimizer", "SQL 优化", WandSparkles],
     ["assets", "数据资产", Database],
     ["catalog", "TiDB 结构", Network],
+    ["incidents", "AIOps 事件", Activity],
+    ["sql-optimizer", "SQL 优化", WandSparkles],
+    ["scenarios", "场景中心", Workflow],
   ] as const;
   const loadCatalog = async (endpoint = "demo://tidb") => {
     setCatalogLoading(true);
@@ -360,11 +374,19 @@ function App() {
           </button>
         ))}
         <div className="aside-bottom">
-          <button className="nav" aria-label="系统设置" onClick={() => setPage("catalog")}>
+          <button
+            className="nav"
+            aria-label="系统设置"
+            onClick={() => setPage("catalog")}
+          >
             <Settings size={18} />
             <span className="nav-label">系统设置</span>
           </button>
-          <button className="nav" aria-label="退出登录" onClick={() => setLogged(false)}>
+          <button
+            className="nav"
+            aria-label="退出登录"
+            onClick={() => setLogged(false)}
+          >
             <LogOut size={18} />
             <span className="nav-label">退出登录</span>
           </button>
@@ -411,11 +433,16 @@ function App() {
   );
 }
 function Workbench({ setPage }: { setPage: (p: Page) => void }) {
+  const today = new Intl.DateTimeFormat("zh-CN", {
+    month: "long",
+    day: "numeric",
+    weekday: "long",
+  }).format(new Date());
   return (
     <section className="content">
       <div className="welcome">
         <div>
-          <span className="eyebrow">星期一，8 月 19 日</span>
+          <span className="eyebrow">{today}</span>
           <h1>早上好，林工</h1>
           <p>这里是今天的运营概览，所有重要事项都在这里。</p>
         </div>
@@ -443,6 +470,44 @@ function Workbench({ setPage }: { setPage: (p: Page) => void }) {
           hint="本周累计"
           tone="purple"
         />
+      </div>
+      <div className="workbench-tasks" aria-label="常用工作">
+        {[
+          ["query", "经营数据分析", "自然语言转 SQL 并生成图表", MessageSquare],
+          [
+            "knowledge",
+            "查询企业知识",
+            "从制度、手册和案例中获取有引用的回答",
+            BookOpen,
+          ],
+          [
+            "sql-optimizer",
+            "诊断 SQL 性能",
+            "按 TiDB 版本分析执行计划与索引建议",
+            WandSparkles,
+          ],
+          [
+            "scenarios",
+            "发起协同任务",
+            "按模板执行巡检、报告与故障处置",
+            Workflow,
+          ],
+        ].map(([id, title, description, Icon]) => (
+          <button
+            className="workbench-task"
+            key={String(id)}
+            onClick={() => setPage(id as Page)}
+          >
+            <span className="task-icon">
+              <Icon size={19} />
+            </span>
+            <span>
+              <b>{String(title)}</b>
+              <small>{String(description)}</small>
+            </span>
+            <ChevronRight size={17} />
+          </button>
+        ))}
       </div>
       <div className="grid-two">
         <div className="panel">
@@ -1152,7 +1217,9 @@ function KnowledgeBasePage() {
   const [libraries, setLibraries] = useState<KnowledgeBaseRecord[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
-  const [question, setQuestion] = useState("TiDB 巡检发现慢 SQL 时应该如何处理？");
+  const [question, setQuestion] = useState(
+    "TiDB 巡检发现慢 SQL 时应该如何处理？",
+  );
   const [result, setResult] = useState<KnowledgeQueryResult | null>(null);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -1163,7 +1230,17 @@ function KnowledgeBasePage() {
   const [showCreate, setShowCreate] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const selected = libraries.find((item) => item.id === selectedId) || libraries[0];
+  const [activeTab, setActiveTab] = useState<
+    "ask" | "documents" | "retrieval" | "settings"
+  >("ask");
+  const [queries, setQueries] = useState<KnowledgeQueryResult[]>([]);
+  const [selectedDocumentId, setSelectedDocumentId] = useState("");
+  const [chunks, setChunks] = useState<KnowledgeChunk[]>([]);
+  const [feedback, setFeedback] = useState<"helpful" | "not-helpful" | "idle">(
+    "idle",
+  );
+  const selected =
+    libraries.find((item) => item.id === selectedId) || libraries[0];
 
   const loadLibraries = async (preferredId?: string) => {
     try {
@@ -1176,9 +1253,39 @@ function KnowledgeBasePage() {
   };
   const loadDocuments = async (knowledgeBaseId: string) => {
     try {
-      setDocuments(await api<KnowledgeDocument[]>(`/knowledge-bases/${knowledgeBaseId}/documents`));
+      setDocuments(
+        await api<KnowledgeDocument[]>(
+          `/knowledge-bases/${knowledgeBaseId}/documents`,
+        ),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "文档列表加载失败");
+    }
+  };
+  const loadQueries = async (knowledgeBaseId: string) => {
+    try {
+      setQueries(
+        await api<KnowledgeQueryResult[]>(
+          "/knowledge-bases/" + knowledgeBaseId + "/queries?limit=20",
+        ),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "检索历史加载失败");
+    }
+  };
+  const loadChunks = async (knowledgeBaseId: string, documentId: string) => {
+    try {
+      setChunks(
+        await api<KnowledgeChunk[]>(
+          "/knowledge-bases/" +
+            knowledgeBaseId +
+            "/documents/" +
+            documentId +
+            "/chunks",
+        ),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "分块预览加载失败");
     }
   };
   useEffect(() => {
@@ -1188,11 +1295,18 @@ function KnowledgeBasePage() {
     if (selectedId) {
       setResult(null);
       void loadDocuments(selectedId);
+      void loadQueries(selectedId);
+      setSelectedDocumentId("");
+      setChunks([]);
+      setFeedback("idle");
     }
   }, [selectedId]);
   const refresh = async () => {
     await loadLibraries(selectedId);
-    if (selectedId) await loadDocuments(selectedId);
+    if (selectedId) {
+      await loadDocuments(selectedId);
+      await loadQueries(selectedId);
+    }
   };
   const createLibrary = async () => {
     if (!newName.trim()) return;
@@ -1201,7 +1315,10 @@ function KnowledgeBasePage() {
     try {
       const item = await api<KnowledgeBaseRecord>("/knowledge-bases", {
         method: "POST",
-        body: JSON.stringify({ name: newName.trim(), description: newDescription.trim() }),
+        body: JSON.stringify({
+          name: newName.trim(),
+          description: newDescription.trim(),
+        }),
       });
       setNewName("");
       setNewDescription("");
@@ -1218,14 +1335,20 @@ function KnowledgeBasePage() {
     setBusy("text");
     setError("");
     try {
-      await api<KnowledgeDocument>(`/knowledge-bases/${selected.id}/documents`, {
-        method: "POST",
-        body: JSON.stringify({
-          title: title.trim(),
-          content,
-          tags: tags.split(",").map((item) => item.trim()).filter(Boolean),
-        }),
-      });
+      await api<KnowledgeDocument>(
+        `/knowledge-bases/${selected.id}/documents`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title: title.trim(),
+            content,
+            tags: tags
+              .split(",")
+              .map((item) => item.trim())
+              .filter(Boolean),
+          }),
+        },
+      );
       setTitle("");
       setContent("");
       setTags("");
@@ -1236,17 +1359,24 @@ function KnowledgeBasePage() {
       setBusy("");
     }
   };
-  const uploadDocuments = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const uploadDocuments = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     if (!selected || !event.target.files?.length) return;
     setBusy("upload");
     setError("");
     try {
       const form = new FormData();
-      Array.from(event.target.files).forEach((file) => form.append("files", file));
-      await api<KnowledgeDocument[]>(`/knowledge-bases/${selected.id}/documents/upload`, {
-        method: "POST",
-        body: form,
-      });
+      Array.from(event.target.files).forEach((file) =>
+        form.append("files", file),
+      );
+      await api<KnowledgeDocument[]>(
+        `/knowledge-bases/${selected.id}/documents/upload`,
+        {
+          method: "POST",
+          body: form,
+        },
+      );
       event.target.value = "";
       await refresh();
     } catch (e) {
@@ -1260,13 +1390,19 @@ function KnowledgeBasePage() {
     setBusy("directory");
     setError("");
     try {
-      await api<KnowledgeDocument[]>(`/knowledge-bases/${selected.id}/documents/local-directory`, {
-        method: "POST",
-        body: JSON.stringify({
-          path: directory.trim(),
-          tags: tags.split(",").map((item) => item.trim()).filter(Boolean),
-        }),
-      });
+      await api<KnowledgeDocument[]>(
+        `/knowledge-bases/${selected.id}/documents/local-directory`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            path: directory.trim(),
+            tags: tags
+              .split(",")
+              .map((item) => item.trim())
+              .filter(Boolean),
+          }),
+        },
+      );
       setDirectory("");
       await refresh();
     } catch (e) {
@@ -1280,47 +1416,131 @@ function KnowledgeBasePage() {
     setBusy("query");
     setError("");
     try {
-      setResult(await api<KnowledgeQueryResult>(`/knowledge-bases/${selected.id}/query`, {
-        method: "POST",
-        body: JSON.stringify({ question: question.trim(), top_k: 5 }),
-      }));
+      const nextResult = await api<KnowledgeQueryResult>(
+        `/knowledge-bases/${selected.id}/query`,
+        {
+          method: "POST",
+          body: JSON.stringify({ question: question.trim(), top_k: 5 }),
+        },
+      );
+      setResult(nextResult);
+      setFeedback("idle");
+      await loadQueries(selected.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "知识库检索失败");
     } finally {
       setBusy("");
     }
   };
+  const submitFeedback = async (helpful: boolean) => {
+    if (!selected || !result) return;
+    setBusy("feedback");
+    try {
+      await api<KnowledgeFeedback>(
+        "/knowledge-bases/" +
+          selected.id +
+          "/queries/" +
+          result.query_id +
+          "/feedback",
+        {
+          method: "POST",
+          body: JSON.stringify({ helpful }),
+        },
+      );
+      setFeedback(helpful ? "helpful" : "not-helpful");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "反馈提交失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const scenarioQuestions = [
+    ["TiDB 慢 SQL", "TiDB 巡检发现慢 SQL 时应该如何处理？"],
+    ["生产变更", "生产变更需要哪些审批和回滚准备？"],
+    ["数据质量", "数据质量告警后如何定位影响并完成补数验证？"],
+    ["故障值班", "线上故障处置完成后需要保留哪些证据？"],
+  ] as const;
   return (
     <section className="content knowledge-page">
       <div className="section-head">
         <div>
           <span className="eyebrow">RAG · 文档分块 · 引用溯源</span>
           <h1>知识库</h1>
-          <p className="section-subtitle">把企业规范、运维手册和项目资料沉淀为可检索、可核验的工作上下文。</p>
+          <p className="section-subtitle">
+            把企业规范、运维手册和项目资料沉淀为可检索、可核验的工作上下文。
+          </p>
         </div>
-        <button className="secondary" onClick={() => void refresh()} disabled={Boolean(busy)}>
+        <button
+          className="secondary"
+          onClick={() => void refresh()}
+          disabled={Boolean(busy)}
+        >
           <RefreshCw size={15} /> 刷新
         </button>
       </div>
-      {error && <div className="error-banner">{error}<button onClick={() => setError("")}><X size={14} /></button></div>}
+      {error && (
+        <div className="error-banner">
+          {error}
+          <button onClick={() => setError("")}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
       <div className="knowledge-layout">
         <div className="panel knowledge-library">
           <div className="panel-head">
-            <h3><LibraryIcon /> 知识库</h3>
-            <button className="icon-btn" title="新建知识库" onClick={() => setShowCreate((current) => !current)}><Plus size={16} /></button>
+            <h3>
+              <LibraryIcon /> 知识库
+            </h3>
+            <button
+              className="icon-btn"
+              title="新建知识库"
+              onClick={() => setShowCreate((current) => !current)}
+            >
+              <Plus size={16} />
+            </button>
           </div>
           {showCreate && (
             <div className="knowledge-create">
-              <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="知识库名称" />
-              <input value={newDescription} onChange={(event) => setNewDescription(event.target.value)} placeholder="用途描述（可选）" />
-              <button className="primary" onClick={() => void createLibrary()} disabled={busy === "create"}><Plus size={14} /> 创建</button>
+              <input
+                value={newName}
+                onChange={(event) => setNewName(event.target.value)}
+                placeholder="知识库名称"
+              />
+              <input
+                value={newDescription}
+                onChange={(event) => setNewDescription(event.target.value)}
+                placeholder="用途描述（可选）"
+              />
+              <button
+                className="primary"
+                onClick={() => void createLibrary()}
+                disabled={busy === "create"}
+              >
+                <Plus size={14} /> 创建
+              </button>
             </div>
           )}
           <div className="knowledge-library-list">
             {libraries.map((item) => (
-              <button key={item.id} className={item.id === selected?.id ? "knowledge-library-item active" : "knowledge-library-item"} onClick={() => setSelectedId(item.id)}>
-                <span className="knowledge-library-icon"><BookOpen size={15} /></span>
-                <span><b>{item.name}</b><small>{item.document_count} 份文档 · {item.chunk_count} 个片段</small></span>
+              <button
+                key={item.id}
+                className={
+                  item.id === selected?.id
+                    ? "knowledge-library-item active"
+                    : "knowledge-library-item"
+                }
+                onClick={() => setSelectedId(item.id)}
+              >
+                <span className="knowledge-library-icon">
+                  <BookOpen size={15} />
+                </span>
+                <span>
+                  <b>{item.name}</b>
+                  <small>
+                    {item.document_count} 份文档 · {item.chunk_count} 个片段
+                  </small>
+                </span>
               </button>
             ))}
             {!libraries.length && <div className="empty">暂无知识库</div>}
@@ -1330,73 +1550,390 @@ function KnowledgeBasePage() {
           {selected ? (
             <>
               <div className="knowledge-stats">
-                <Metric label="文档数" value={String(selected.document_count)} hint="已完成索引" tone="blue" />
-                <Metric label="检索片段" value={String(selected.chunk_count)} hint={selected.retrieval_strategy} tone="purple" />
-                <Metric label="分块大小" value={`${selected.chunk_size}`} hint={`重叠 ${selected.chunk_overlap}`} tone="green" />
-                <Metric label="索引模式" value="本地" hint={selected.embedding_provider} tone="red" />
+                <Metric
+                  label="文档数"
+                  value={String(selected.document_count)}
+                  hint="已完成索引"
+                  tone="blue"
+                />
+                <Metric
+                  label="检索片段"
+                  value={String(selected.chunk_count)}
+                  hint={selected.retrieval_strategy}
+                  tone="purple"
+                />
+                <Metric
+                  label="分块大小"
+                  value={`${selected.chunk_size}`}
+                  hint={`重叠 ${selected.chunk_overlap}`}
+                  tone="green"
+                />
+                <Metric
+                  label="索引模式"
+                  value="本地"
+                  hint={selected.embedding_provider}
+                  tone="red"
+                />
               </div>
-              <div className="panel knowledge-query">
-                <div className="panel-head">
-                  <div><h3><MessageSquare size={16} /> 检索问答</h3><span className="panel-help">{selected.name}</span></div>
-                  <span className="chip success">引用优先</span>
+              <div
+                className="knowledge-tabs"
+                role="tablist"
+                aria-label="知识库任务"
+              >
+                {(
+                  [
+                    ["ask", "问知识库", MessageSquare],
+                    ["documents", "文档管理", FileText],
+                    ["retrieval", "检索测试", Search],
+                    ["settings", "配置", Settings],
+                  ] as const
+                ).map(([id, label, Icon]) => (
+                  <button
+                    key={id}
+                    role="tab"
+                    aria-selected={activeTab === id}
+                    className={activeTab === id ? "active" : ""}
+                    onClick={() => setActiveTab(id)}
+                  >
+                    <Icon size={15} /> {label}
+                  </button>
+                ))}
+              </div>
+              {activeTab === "ask" && (
+                <div className="knowledge-scenarios">
+                  <span>常用场景</span>
+                  {scenarioQuestions.map(([label, value]) => (
+                    <button
+                      key={label}
+                      onClick={() => {
+                        setQuestion(value);
+                        setResult(null);
+                      }}
+                    >
+                      {label} <ChevronRight size={13} />
+                    </button>
+                  ))}
                 </div>
-                <textarea value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="输入关于制度、数据或运维资料的问题..." />
-                <div className="knowledge-query-actions">
-                  <span>最多返回 5 个相关片段</span>
-                  <button className="primary" onClick={() => void query()} disabled={busy === "query"}><Send size={15} /> {busy === "query" ? "检索中..." : "检索并回答"}</button>
-                </div>
-                {result && (
-                  <div className="knowledge-answer">
-                    <div className="knowledge-answer-head">
-                      <b>回答</b>
-                      <span className={`chip ${result.confidence === "low" ? "" : "success"}`}>{result.confidence === "high" ? "高置信度" : result.confidence === "medium" ? "中置信度" : "未找到充分证据"}</span>
+              )}
+              {(activeTab === "ask" || activeTab === "retrieval") && (
+                <div className="panel knowledge-query">
+                  <div className="panel-head">
+                    <div>
+                      <h3>
+                        {activeTab === "ask" ? (
+                          <MessageSquare size={16} />
+                        ) : (
+                          <Search size={16} />
+                        )}{" "}
+                        {activeTab === "ask" ? "问知识库" : "检索测试"}
+                      </h3>
+                      <span className="panel-help">{selected.name}</span>
                     </div>
-                    <p>{result.answer}</p>
-                    <div className="knowledge-answer-meta">检索模式：{result.retrieval_mode} · 查询 ID：{result.query_id}</div>
-                    <div className="knowledge-citations">
-                      <div className="knowledge-citations-title"><Quote size={14} /> 引用来源（{result.citations.length}）</div>
-                      {result.citations.map((citation) => (
-                        <div className="knowledge-citation" key={citation.chunk_id}>
-                          <div className="citation-rank">{citation.rank}</div>
-                          <div><b>{citation.document_title}</b><span>{citation.excerpt}</span><small>相关度 {(citation.score * 100).toFixed(0)}% · {citation.source_uri}</small></div>
-                        </div>
-                      ))}
-                    </div>
+                    <span className="chip success">
+                      {activeTab === "ask" ? "引用优先" : "单库召回"}
+                    </span>
                   </div>
-                )}
-              </div>
-              <div className="knowledge-columns">
-                <div className="panel knowledge-documents">
-                  <div className="panel-head"><h3><FileText size={16} /> 文档库</h3><span className="chip">{documents.length} 份</span></div>
-                  <div className="knowledge-document-list">
-                    {documents.map((document) => (
-                      <div className="knowledge-document-row" key={document.id}>
-                        <span className="knowledge-doc-icon"><FileText size={15} /></span>
-                        <div><b>{document.title}</b><span>{document.source_type} · {document.chunk_count} 个片段</span></div>
-                        <span className="chip success">{document.status === "ready" ? "已就绪" : document.status}</span>
+                  <textarea
+                    value={question}
+                    onChange={(event) => setQuestion(event.target.value)}
+                    placeholder="输入关于制度、数据或运维资料的问题..."
+                  />
+                  <div className="knowledge-query-actions">
+                    <span>最多返回 5 个相关片段</span>
+                    <button
+                      className="primary"
+                      onClick={() => void query()}
+                      disabled={busy === "query"}
+                    >
+                      <Send size={15} />{" "}
+                      {busy === "query"
+                        ? "检索中..."
+                        : activeTab === "ask"
+                          ? "检索并回答"
+                          : "运行测试"}
+                    </button>
+                  </div>
+                  {result && (
+                    <div className="knowledge-answer">
+                      <div className="knowledge-answer-head">
+                        <b>回答</b>
+                        <span
+                          className={`chip ${result.confidence === "low" ? "" : "success"}`}
+                        >
+                          {result.confidence === "high"
+                            ? "高置信度"
+                            : result.confidence === "medium"
+                              ? "中置信度"
+                              : "未找到充分证据"}
+                        </span>
                       </div>
-                    ))}
-                    {!documents.length && <div className="empty">尚未添加文档</div>}
+                      <p>{result.answer}</p>
+                      <div className="knowledge-answer-meta">
+                        检索模式：{result.retrieval_mode} · 查询 ID：
+                        {result.query_id}
+                      </div>
+                      <div className="knowledge-citations">
+                        <div className="knowledge-citations-title">
+                          <Quote size={14} /> 引用来源（
+                          {result.citations.length}）
+                        </div>
+                        {result.citations.map((citation) => (
+                          <div
+                            className="knowledge-citation"
+                            key={citation.chunk_id}
+                          >
+                            <div className="citation-rank">{citation.rank}</div>
+                            <div>
+                              <b>{citation.document_title}</b>
+                              <span>{citation.excerpt}</span>
+                              <small>
+                                相关度 {(citation.score * 100).toFixed(0)}% ·{" "}
+                                {citation.source_uri}
+                              </small>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="knowledge-feedback">
+                        <span>
+                          {feedback === "idle"
+                            ? "这次结果是否有帮助？"
+                            : "反馈已记录"}
+                        </span>
+                        <button
+                          className={feedback === "helpful" ? "active" : ""}
+                          title="有帮助"
+                          onClick={() => void submitFeedback(true)}
+                          disabled={feedback !== "idle" || busy === "feedback"}
+                        >
+                          有帮助
+                        </button>
+                        <button
+                          className={
+                            feedback === "not-helpful" ? "active negative" : ""
+                          }
+                          title="需改进"
+                          onClick={() => void submitFeedback(false)}
+                          disabled={feedback !== "idle" || busy === "feedback"}
+                        >
+                          需改进
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {activeTab === "retrieval" && (
+                    <div className="knowledge-history">
+                      <div className="knowledge-citations-title">
+                        <Clock3 size={14} /> 最近测试
+                      </div>
+                      {queries.slice(0, 6).map((item) => (
+                        <button
+                          key={item.query_id}
+                          onClick={() => {
+                            setQuestion(item.question);
+                            setResult(item);
+                            setFeedback("idle");
+                          }}
+                        >
+                          <span>{item.question}</span>
+                          <small>
+                            {item.citations.length} 条命中 · {item.confidence}
+                          </small>
+                        </button>
+                      ))}
+                      {!queries.length && (
+                        <div className="empty">运行一次检索后显示记录</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+              {activeTab === "documents" && (
+                <div className="knowledge-columns">
+                  <div className="panel knowledge-documents">
+                    <div className="panel-head">
+                      <h3>
+                        <FileText size={16} /> 文档库
+                      </h3>
+                      <span className="chip">{documents.length} 份</span>
+                    </div>
+                    <div className="knowledge-document-list">
+                      {documents.map((document) => (
+                        <button
+                          className={
+                            selectedDocumentId === document.id
+                              ? "knowledge-document-row active"
+                              : "knowledge-document-row"
+                          }
+                          key={document.id}
+                          onClick={() => {
+                            setSelectedDocumentId(document.id);
+                            void loadChunks(selected.id, document.id);
+                          }}
+                        >
+                          <span className="knowledge-doc-icon">
+                            <FileText size={15} />
+                          </span>
+                          <div>
+                            <b>{document.title}</b>
+                            <span>
+                              {document.source_type} · {document.chunk_count}{" "}
+                              个片段
+                            </span>
+                          </div>
+                          <span className="chip success">
+                            {document.status === "ready"
+                              ? "已就绪"
+                              : document.status}
+                          </span>
+                        </button>
+                      ))}
+                      {!documents.length && (
+                        <div className="empty">尚未添加文档</div>
+                      )}
+                    </div>
+                    {selectedDocumentId && (
+                      <div className="knowledge-chunks">
+                        <div className="knowledge-citations-title">
+                          <ListChecks size={14} /> 分块预览（{chunks.length}）
+                        </div>
+                        {chunks.map((chunk) => (
+                          <div className="knowledge-chunk" key={chunk.id}>
+                            <b>片段 {chunk.position + 1}</b>
+                            <span>{chunk.text}</span>
+                            <small>
+                              {chunk.token_count} 个检索词 · {chunk.id}
+                            </small>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="panel knowledge-ingest">
+                    <div className="panel-head">
+                      <h3>
+                        <UploadCloud size={16} /> 添加资料
+                      </h3>
+                      <span className="panel-help">
+                        支持 TXT / Markdown / HTML / JSON / SQL
+                      </span>
+                    </div>
+                    <div className="knowledge-ingest-tabs">
+                      <span className="active">
+                        <FileText size={13} /> 文本
+                      </span>
+                      <label className="secondary file-button">
+                        <UploadCloud size={14} /> 上传文件
+                        <input
+                          type="file"
+                          multiple
+                          accept=".txt,.md,.markdown,.html,.htm,.json,.sql,.ddl"
+                          onChange={(event) => void uploadDocuments(event)}
+                        />
+                      </label>
+                    </div>
+                    <input
+                      value={title}
+                      onChange={(event) => setTitle(event.target.value)}
+                      placeholder="文档标题"
+                    />
+                    <textarea
+                      value={content}
+                      onChange={(event) => setContent(event.target.value)}
+                      placeholder="粘贴规范、手册或项目资料..."
+                    />
+                    <input
+                      value={tags}
+                      onChange={(event) => setTags(event.target.value)}
+                      placeholder="标签，用逗号分隔（可选）"
+                    />
+                    <button
+                      className="primary wide"
+                      onClick={() => void addTextDocument()}
+                      disabled={
+                        busy === "text" || !title.trim() || !content.trim()
+                      }
+                    >
+                      <Plus size={15} />{" "}
+                      {busy === "text" ? "入库中..." : "入库文本"}
+                    </button>
+                    <div className="knowledge-directory">
+                      <label>
+                        <FolderOpen size={14} /> 本机目录
+                      </label>
+                      <div>
+                        <input
+                          value={directory}
+                          onChange={(event) => setDirectory(event.target.value)}
+                          placeholder="/data/handbook"
+                        />
+                        <button
+                          className="secondary"
+                          onClick={() => void scanDirectory()}
+                          disabled={busy === "directory"}
+                        >
+                          扫描
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
-                <div className="panel knowledge-ingest">
-                  <div className="panel-head"><h3><UploadCloud size={16} /> 添加资料</h3><span className="panel-help">支持 TXT / Markdown / HTML / JSON / SQL</span></div>
-                  <div className="knowledge-ingest-tabs">
-                    <span className="active"><FileText size={13} /> 文本</span>
-                    <label className="secondary file-button"><UploadCloud size={14} /> 上传文件<input type="file" multiple accept=".txt,.md,.markdown,.html,.htm,.json,.sql,.ddl" onChange={(event) => void uploadDocuments(event)} /></label>
+              )}
+              {activeTab === "settings" && (
+                <div className="panel knowledge-settings">
+                  <div className="panel-head">
+                    <h3>
+                      <Settings size={16} /> 知识库配置
+                    </h3>
+                    <span className="chip success">本地索引</span>
                   </div>
-                  <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="文档标题" />
-                  <textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="粘贴规范、手册或项目资料..." />
-                  <input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="标签，用逗号分隔（可选）" />
-                  <button className="primary wide" onClick={() => void addTextDocument()} disabled={busy === "text" || !title.trim() || !content.trim()}><Plus size={15} /> {busy === "text" ? "入库中..." : "入库文本"}</button>
-                  <div className="knowledge-directory">
-                    <label><FolderOpen size={14} /> 本机目录</label>
-                    <div><input value={directory} onChange={(event) => setDirectory(event.target.value)} placeholder="/data/handbook" /><button className="secondary" onClick={() => void scanDirectory()} disabled={busy === "directory"}>扫描</button></div>
+                  <div className="knowledge-setting-grid">
+                    <label>
+                      <span>知识库名称</span>
+                      <input value={selected.name} readOnly />
+                    </label>
+                    <label>
+                      <span>可见范围</span>
+                      <input
+                        value={
+                          selected.scope === "workspace"
+                            ? "当前工作区"
+                            : selected.scope
+                        }
+                        readOnly
+                      />
+                    </label>
+                    <label>
+                      <span>检索策略</span>
+                      <input value={selected.retrieval_strategy} readOnly />
+                    </label>
+                    <label>
+                      <span>索引提供方</span>
+                      <input value={selected.embedding_provider} readOnly />
+                    </label>
+                    <label>
+                      <span>分块大小</span>
+                      <input value={selected.chunk_size} readOnly />
+                    </label>
+                    <label>
+                      <span>相邻重叠</span>
+                      <input value={selected.chunk_overlap} readOnly />
+                    </label>
+                  </div>
+                  <div className="policy-box">
+                    <b>生产切换条件</b>
+                    <p>
+                      完成持久化、向量检索、模型网关、文档 ACL
+                      和异步索引验收后，再把索引模式从 local-keyword 切换为
+                      hybrid。
+                    </p>
                   </div>
                 </div>
-              </div>
+              )}
             </>
-          ) : <div className="empty panel">请选择或创建知识库</div>}
+          ) : (
+            <div className="empty panel">请选择或创建知识库</div>
+          )}
         </div>
       </div>
     </section>
@@ -1405,8 +1942,22 @@ function KnowledgeBasePage() {
 function LibraryIcon() {
   return <BookOpen size={16} />;
 }
-function scenarioStatusLabel(status: ScenarioRun["status"] | Scenario["status"] | ScenarioStep["status"]) {
-  return ({ ready: "可运行", running: "运行中", waiting_approval: "等待审批", completed: "已完成", failed: "失败", queued: "排队中", skipped: "已跳过" } as Record<string, string>)[status] || status;
+function scenarioStatusLabel(
+  status: ScenarioRun["status"] | Scenario["status"] | ScenarioStep["status"],
+) {
+  return (
+    (
+      {
+        ready: "可运行",
+        running: "运行中",
+        waiting_approval: "等待审批",
+        completed: "已完成",
+        failed: "失败",
+        queued: "排队中",
+        skipped: "已跳过",
+      } as Record<string, string>
+    )[status] || status
+  );
 }
 function scenarioStatusClass(status: string) {
   return "scenario-status " + status.replace("_", "-");
@@ -1416,54 +1967,409 @@ function ScenarioCenter() {
   const [runs, setRuns] = useState<ScenarioRun[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [category, setCategory] = useState("全部");
-  const [objective, setObjective] = useState("检查今晚的关键任务与系统风险，并给出可执行的处置结果");
+  const [objective, setObjective] = useState(
+    "检查今晚的关键任务与系统风险，并给出可执行的处置结果",
+  );
   const [context, setContext] = useState("");
   const [selectedRun, setSelectedRun] = useState<ScenarioRun | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const load = async () => {
     try {
-      const [items, existing] = await Promise.all([api<Scenario[]>("/scenarios"), api<ScenarioRun[]>("/scenario-runs")]);
-      setScenarios(items); setRuns(existing);
+      const [items, existing] = await Promise.all([
+        api<Scenario[]>("/scenarios"),
+        api<ScenarioRun[]>("/scenario-runs"),
+      ]);
+      setScenarios(items);
+      setRuns(existing);
       setSelectedId((current) => current || items[0]?.id || "");
       setSelectedRun((current) => current || existing[0] || null);
-    } catch (e) { setError(e instanceof Error ? e.message : "场景加载失败"); }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "场景加载失败");
+    }
   };
   useEffect(() => {
     void load();
   }, []);
-  const categories = ["全部", ...Array.from(new Set(scenarios.map((item) => item.category)))];
-  const filtered = scenarios.filter((item) => category === "全部" || item.category === category);
-  const selected = scenarios.find((item) => item.id === selectedId) || filtered[0];
+  const categories = [
+    "全部",
+    ...Array.from(new Set(scenarios.map((item) => item.category))),
+  ];
+  const filtered = scenarios.filter(
+    (item) => category === "全部" || item.category === category,
+  );
+  const selected =
+    scenarios.find((item) => item.id === selectedId) || filtered[0];
   const start = async () => {
     if (!selected || !objective.trim()) return;
-    setBusy(true); setError("");
+    setBusy(true);
+    setError("");
     try {
-      const run = await api<ScenarioRun>(`/scenarios/${selected.id}/runs`, { method: "POST", body: JSON.stringify({ objective, context }) });
-      setSelectedRun(run); setRuns((current) => [run, ...current]);
-    } catch (e) { setError(e instanceof Error ? e.message : "启动场景失败"); } finally { setBusy(false); }
+      const run = await api<ScenarioRun>(`/scenarios/${selected.id}/runs`, {
+        method: "POST",
+        body: JSON.stringify({ objective, context }),
+      });
+      setSelectedRun(run);
+      setRuns((current) => [run, ...current]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "启动场景失败");
+    } finally {
+      setBusy(false);
+    }
   };
   const updateRun = async (action: "advance" | "approve") => {
     if (!selectedRun) return;
-    setBusy(true); setError("");
+    setBusy(true);
+    setError("");
     try {
-      const run = await api<ScenarioRun>(`/scenario-runs/${selectedRun.run_id}/${action}`, { method: "POST" });
-      setSelectedRun(run); setRuns((current) => current.map((item) => item.run_id === run.run_id ? run : item));
-    } catch (e) { setError(e instanceof Error ? e.message : "场景状态更新失败"); } finally { setBusy(false); }
+      const run = await api<ScenarioRun>(
+        `/scenario-runs/${selectedRun.run_id}/${action}`,
+        { method: "POST" },
+      );
+      setSelectedRun(run);
+      setRuns((current) =>
+        current.map((item) => (item.run_id === run.run_id ? run : item)),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "场景状态更新失败");
+    } finally {
+      setBusy(false);
+    }
   };
-  return <section className="content scenario-page">
-    <div className="section-head"><div><span className="eyebrow">Agent Team · 定时触发 · 任务留痕 · 人工审批</span><h1>场景中心</h1><p className="section-subtitle">把多场景探索中的协作模式落成可配置、可运行、可追踪的企业 AI 控制平面。</p></div><button className="secondary" onClick={() => void load()}><RefreshCw size={16}/>刷新场景</button></div>
-    {error && <div className="error-banner">{error}</div>}
-    <div className="scenario-summary"><Metric label="场景模板" value={String(scenarios.length)} hint="来自多场景探索" tone="blue"/><Metric label="运行实例" value={String(runs.length)} hint="可追踪任务" tone="green"/><Metric label="待审批" value={String(runs.filter((item) => item.status === "waiting_approval").length)} hint="高风险动作已阻断" tone="red"/><Metric label="已接入模式" value="只读优先" hint="Runbook 可扩展" tone="purple"/></div>
-    <div className="scenario-layout">
-      <div className="scenario-library panel"><div className="panel-head"><h3><Workflow size={16}/>场景模板</h3><span className="chip">{filtered.length} 个</span></div><div className="scenario-filters">{categories.map((item) => <button key={item} className={category === item ? "filter active" : "filter"} onClick={() => setCategory(item)}>{item}</button>)}</div><div className="scenario-list">{filtered.map((item) => <button key={item.id} className={selected?.id === item.id ? "scenario-card active" : "scenario-card"} onClick={() => setSelectedId(item.id)}><div className="scenario-card-top"><span className="scenario-icon"><Bot size={16}/></span><span className="chip">{item.category}</span></div><b>{item.name}</b><p>{item.summary}</p><small>{item.agents.length} 个 Agent · {item.steps.length} 个步骤</small></button>)}</div></div>
-      <div className="scenario-detail">
-        {selected ? <><div className="panel scenario-hero"><div className="scenario-hero-top"><div><span className="eyebrow">{selected.category}</span><h2>{selected.name}</h2><p>{selected.summary}</p></div><span className={scenarioStatusClass(selected.status)}>{scenarioStatusLabel(selected.status)}</span></div><div className="scenario-value"><b>提效价值</b><span>{selected.value}</span></div><div className="scenario-tags">{selected.triggers.map((item) => <span className="chip" key={item}>触发 · {item}</span>)}{selected.integrations.slice(0, 4).map((item) => <span className="chip" key={item}>连接 · {item}</span>)}</div></div><div className="scenario-columns"><div className="panel"><div className="panel-head"><h3><Bot size={16}/>Agent 阵容</h3><span className="chip">{selected.agents.length}</span></div><div className="agent-list">{selected.agents.map((item, index) => <div className="agent-row" key={item}><span>{String(index + 1).padStart(2, "0")}</span><b>{item}</b></div>)}</div><div className="policy-box"><b>审批策略</b><p>{selected.approval_policy}</p></div></div><div className="panel"><div className="panel-head"><h3><ListChecks size={16}/>执行步骤</h3><span className="chip">顺序与并行可编排</span></div><div className="template-steps">{selected.steps.map((item, index) => <div className="template-step" key={item.id}><span className="step-index">{index + 1}</span><div><b>{item.title}</b><span>{item.role} · {item.description}</span></div><span className={"risk-pill " + item.risk}>{item.risk === "high" ? "高风险" : item.risk === "medium" ? "需确认" : "只读"}</span></div>)}</div></div></div><div className="panel scenario-launch"><div className="panel-head"><div><h3>启动一次协作任务</h3><span className="panel-help">任务会创建根实例，步骤完成前保留审计和证据。</span></div><span className="chip success">审批门禁已开启</span></div><textarea value={objective} onChange={(event) => setObjective(event.target.value)} placeholder="本次任务目标"/><input value={context} onChange={(event) => setContext(event.target.value)} placeholder="可选上下文：环境、时间范围、服务或业务范围"/><button className="primary" onClick={start} disabled={busy || !objective.trim()}><PlayCircle size={16}/>{busy ? "提交中…" : "启动场景"}</button></div></> : <div className="empty panel">暂无场景模板</div>}
+  return (
+    <section className="content scenario-page">
+      <div className="section-head">
+        <div>
+          <span className="eyebrow">
+            Agent Team · 定时触发 · 任务留痕 · 人工审批
+          </span>
+          <h1>场景中心</h1>
+          <p className="section-subtitle">
+            把多场景探索中的协作模式落成可配置、可运行、可追踪的企业 AI
+            控制平面。
+          </p>
+        </div>
+        <button className="secondary" onClick={() => void load()}>
+          <RefreshCw size={16} />
+          刷新场景
+        </button>
       </div>
-    </div>
-    <div className="scenario-runs panel"><div className="panel-head"><h3><ListChecks size={16}/>最近运行实例</h3><span className="chip">{runs.length} 条</span></div>{runs.length === 0 ? <div className="empty">启动一个场景后，运行记录会显示在这里。</div> : runs.slice(0, 5).map((run) => <button className={selectedRun?.run_id === run.run_id ? "run-row active" : "run-row"} key={run.run_id} onClick={() => setSelectedRun(run)}><div className="run-status-dot"/><div className="row-main"><b>{run.scenario_name}</b><span>{run.objective}</span></div><span className={scenarioStatusClass(run.status)}>{scenarioStatusLabel(run.status)}</span><small>{run.run_id}</small><ArrowRight size={15}/></button>)}</div>
-    {selectedRun && <div className="panel run-detail"><div className="panel-head"><div><span className="eyebrow">运行实例 · {selectedRun.run_id}</span><h3>{selectedRun.scenario_name}</h3></div><div className="run-actions"><span className={scenarioStatusClass(selectedRun.status)}>{scenarioStatusLabel(selectedRun.status)}</span>{selectedRun.status === "waiting_approval" ? <button className="primary" onClick={() => void updateRun("approve")} disabled={busy}><ShieldCheck size={16}/>批准当前动作</button> : selectedRun.status !== "completed" && <button className="secondary" onClick={() => void updateRun("advance")} disabled={busy}><PlayCircle size={16}/>推进一步</button>}</div></div><div className="run-progress"><div className="progress-track"><span style={{ width: `${Math.round(selectedRun.steps.filter((item) => item.status === "completed").length / Math.max(selectedRun.steps.length, 1) * 100)}%` }}/></div><small>{selectedRun.steps.filter((item) => item.status === "completed").length}/{selectedRun.steps.length} 步完成 · 审批 {selectedRun.approvals_granted}/{selectedRun.approvals_required}</small></div><div className="run-step-list">{selectedRun.steps.map((item) => <div className="run-step" key={item.id}><div className={"run-step-icon " + item.status}>{item.status === "completed" ? <CircleCheck size={16}/> : item.status === "waiting_approval" ? <PauseCircle size={16}/> : <Clock3 size={16}/>}</div><div className="row-main"><b>{item.title}</b><span>{item.role} · {item.action}</span>{item.evidence.map((evidence) => <small key={evidence}>{evidence}</small>)}</div><span className={scenarioStatusClass(item.status)}>{scenarioStatusLabel(item.status)}</span></div>)}</div><div className="audit-list"><b>审计轨迹</b>{selectedRun.audit.slice(-5).map((item) => <span key={item}>{item}</span>)}</div></div>}
-  </section>;
+      {error && <div className="error-banner">{error}</div>}
+      <div className="scenario-summary">
+        <Metric
+          label="场景模板"
+          value={String(scenarios.length)}
+          hint="来自多场景探索"
+          tone="blue"
+        />
+        <Metric
+          label="运行实例"
+          value={String(runs.length)}
+          hint="可追踪任务"
+          tone="green"
+        />
+        <Metric
+          label="待审批"
+          value={String(
+            runs.filter((item) => item.status === "waiting_approval").length,
+          )}
+          hint="高风险动作已阻断"
+          tone="red"
+        />
+        <Metric
+          label="已接入模式"
+          value="只读优先"
+          hint="Runbook 可扩展"
+          tone="purple"
+        />
+      </div>
+      <div className="scenario-layout">
+        <div className="scenario-library panel">
+          <div className="panel-head">
+            <h3>
+              <Workflow size={16} />
+              场景模板
+            </h3>
+            <span className="chip">{filtered.length} 个</span>
+          </div>
+          <div className="scenario-filters">
+            {categories.map((item) => (
+              <button
+                key={item}
+                className={category === item ? "filter active" : "filter"}
+                onClick={() => setCategory(item)}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+          <div className="scenario-list">
+            {filtered.map((item) => (
+              <button
+                key={item.id}
+                className={
+                  selected?.id === item.id
+                    ? "scenario-card active"
+                    : "scenario-card"
+                }
+                onClick={() => setSelectedId(item.id)}
+              >
+                <div className="scenario-card-top">
+                  <span className="scenario-icon">
+                    <Bot size={16} />
+                  </span>
+                  <span className="chip">{item.category}</span>
+                </div>
+                <b>{item.name}</b>
+                <p>{item.summary}</p>
+                <small>
+                  {item.agents.length} 个 Agent · {item.steps.length} 个步骤
+                </small>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="scenario-detail">
+          {selected ? (
+            <>
+              <div className="panel scenario-hero">
+                <div className="scenario-hero-top">
+                  <div>
+                    <span className="eyebrow">{selected.category}</span>
+                    <h2>{selected.name}</h2>
+                    <p>{selected.summary}</p>
+                  </div>
+                  <span className={scenarioStatusClass(selected.status)}>
+                    {scenarioStatusLabel(selected.status)}
+                  </span>
+                </div>
+                <div className="scenario-value">
+                  <b>提效价值</b>
+                  <span>{selected.value}</span>
+                </div>
+                <div className="scenario-tags">
+                  {selected.triggers.map((item) => (
+                    <span className="chip" key={item}>
+                      触发 · {item}
+                    </span>
+                  ))}
+                  {selected.integrations.slice(0, 4).map((item) => (
+                    <span className="chip" key={item}>
+                      连接 · {item}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div className="scenario-columns">
+                <div className="panel">
+                  <div className="panel-head">
+                    <h3>
+                      <Bot size={16} />
+                      Agent 阵容
+                    </h3>
+                    <span className="chip">{selected.agents.length}</span>
+                  </div>
+                  <div className="agent-list">
+                    {selected.agents.map((item, index) => (
+                      <div className="agent-row" key={item}>
+                        <span>{String(index + 1).padStart(2, "0")}</span>
+                        <b>{item}</b>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="policy-box">
+                    <b>审批策略</b>
+                    <p>{selected.approval_policy}</p>
+                  </div>
+                </div>
+                <div className="panel">
+                  <div className="panel-head">
+                    <h3>
+                      <ListChecks size={16} />
+                      执行步骤
+                    </h3>
+                    <span className="chip">顺序与并行可编排</span>
+                  </div>
+                  <div className="template-steps">
+                    {selected.steps.map((item, index) => (
+                      <div className="template-step" key={item.id}>
+                        <span className="step-index">{index + 1}</span>
+                        <div>
+                          <b>{item.title}</b>
+                          <span>
+                            {item.role} · {item.description}
+                          </span>
+                        </div>
+                        <span className={"risk-pill " + item.risk}>
+                          {item.risk === "high"
+                            ? "高风险"
+                            : item.risk === "medium"
+                              ? "需确认"
+                              : "只读"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="panel scenario-launch">
+                <div className="panel-head">
+                  <div>
+                    <h3>启动一次协作任务</h3>
+                    <span className="panel-help">
+                      任务会创建根实例，步骤完成前保留审计和证据。
+                    </span>
+                  </div>
+                  <span className="chip success">审批门禁已开启</span>
+                </div>
+                <textarea
+                  value={objective}
+                  onChange={(event) => setObjective(event.target.value)}
+                  placeholder="本次任务目标"
+                />
+                <input
+                  value={context}
+                  onChange={(event) => setContext(event.target.value)}
+                  placeholder="可选上下文：环境、时间范围、服务或业务范围"
+                />
+                <button
+                  className="primary"
+                  onClick={start}
+                  disabled={busy || !objective.trim()}
+                >
+                  <PlayCircle size={16} />
+                  {busy ? "提交中…" : "启动场景"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="empty panel">暂无场景模板</div>
+          )}
+        </div>
+      </div>
+      <div className="scenario-runs panel">
+        <div className="panel-head">
+          <h3>
+            <ListChecks size={16} />
+            最近运行实例
+          </h3>
+          <span className="chip">{runs.length} 条</span>
+        </div>
+        {runs.length === 0 ? (
+          <div className="empty">启动一个场景后，运行记录会显示在这里。</div>
+        ) : (
+          runs.slice(0, 5).map((run) => (
+            <button
+              className={
+                selectedRun?.run_id === run.run_id
+                  ? "run-row active"
+                  : "run-row"
+              }
+              key={run.run_id}
+              onClick={() => setSelectedRun(run)}
+            >
+              <div className="run-status-dot" />
+              <div className="row-main">
+                <b>{run.scenario_name}</b>
+                <span>{run.objective}</span>
+              </div>
+              <span className={scenarioStatusClass(run.status)}>
+                {scenarioStatusLabel(run.status)}
+              </span>
+              <small>{run.run_id}</small>
+              <ArrowRight size={15} />
+            </button>
+          ))
+        )}
+      </div>
+      {selectedRun && (
+        <div className="panel run-detail">
+          <div className="panel-head">
+            <div>
+              <span className="eyebrow">运行实例 · {selectedRun.run_id}</span>
+              <h3>{selectedRun.scenario_name}</h3>
+            </div>
+            <div className="run-actions">
+              <span className={scenarioStatusClass(selectedRun.status)}>
+                {scenarioStatusLabel(selectedRun.status)}
+              </span>
+              {selectedRun.status === "waiting_approval" ? (
+                <button
+                  className="primary"
+                  onClick={() => void updateRun("approve")}
+                  disabled={busy}
+                >
+                  <ShieldCheck size={16} />
+                  批准当前动作
+                </button>
+              ) : (
+                selectedRun.status !== "completed" && (
+                  <button
+                    className="secondary"
+                    onClick={() => void updateRun("advance")}
+                    disabled={busy}
+                  >
+                    <PlayCircle size={16} />
+                    推进一步
+                  </button>
+                )
+              )}
+            </div>
+          </div>
+          <div className="run-progress">
+            <div className="progress-track">
+              <span
+                style={{
+                  width: `${Math.round((selectedRun.steps.filter((item) => item.status === "completed").length / Math.max(selectedRun.steps.length, 1)) * 100)}%`,
+                }}
+              />
+            </div>
+            <small>
+              {
+                selectedRun.steps.filter((item) => item.status === "completed")
+                  .length
+              }
+              /{selectedRun.steps.length} 步完成 · 审批{" "}
+              {selectedRun.approvals_granted}/{selectedRun.approvals_required}
+            </small>
+          </div>
+          <div className="run-step-list">
+            {selectedRun.steps.map((item) => (
+              <div className="run-step" key={item.id}>
+                <div className={"run-step-icon " + item.status}>
+                  {item.status === "completed" ? (
+                    <CircleCheck size={16} />
+                  ) : item.status === "waiting_approval" ? (
+                    <PauseCircle size={16} />
+                  ) : (
+                    <Clock3 size={16} />
+                  )}
+                </div>
+                <div className="row-main">
+                  <b>{item.title}</b>
+                  <span>
+                    {item.role} · {item.action}
+                  </span>
+                  {item.evidence.map((evidence) => (
+                    <small key={evidence}>{evidence}</small>
+                  ))}
+                </div>
+                <span className={scenarioStatusClass(item.status)}>
+                  {scenarioStatusLabel(item.status)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="audit-list">
+            <b>审计轨迹</b>
+            {selectedRun.audit.slice(-5).map((item) => (
+              <span key={item}>{item}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
 }
 function SQLOptimizerPage() {
   const [versions, setVersions] = useState<OptimizerVersion[]>([]);
@@ -1718,7 +2624,11 @@ function SQLOptimizerPage() {
                 <span className="eyebrow">本地部署目录</span>
                 <h3 id="directory-title">读取 SQL / DDL 目录</h3>
               </div>
-              <button className="icon-button" onClick={() => setDirectoryOpen(false)} aria-label="关闭">
+              <button
+                className="icon-button"
+                onClick={() => setDirectoryOpen(false)}
+                aria-label="关闭"
+              >
                 <X size={18} />
               </button>
             </div>
@@ -1728,12 +2638,24 @@ function SQLOptimizerPage() {
               autoFocus
               value={directoryPath}
               onChange={(event) => setDirectoryPath(event.target.value)}
-              onKeyDown={(event) => { if (event.key === "Enter") void scan(); }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void scan();
+              }}
             />
             <div className="dialog-actions">
-              <button className="secondary" onClick={() => setDirectoryOpen(false)}>取消</button>
-              <button className="primary" onClick={() => void scan()} disabled={!directoryPath.trim()}>
-                <FileCode2 size={16} />读取目录
+              <button
+                className="secondary"
+                onClick={() => setDirectoryOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                className="primary"
+                onClick={() => void scan()}
+                disabled={!directoryPath.trim()}
+              >
+                <FileCode2 size={16} />
+                读取目录
               </button>
             </div>
           </div>
@@ -1852,4 +2774,14 @@ function OptimizerResult({ result }: { result: OptimizeResult }) {
     </div>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+
+declare global {
+  interface Window {
+    __aegisRoot?: ReturnType<typeof createRoot>;
+  }
+}
+
+const rootElement = document.getElementById("root")!;
+const root = window.__aegisRoot ?? createRoot(rootElement);
+window.__aegisRoot = root;
+root.render(<App />);
