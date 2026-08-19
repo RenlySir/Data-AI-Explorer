@@ -21,7 +21,7 @@
 | 演示闭环 | 页面、状态和确定性结果可操作，真实企业 Adapter 尚未接入 | 明确显示演示边界，不伪造生产执行 |
 | 待生产接入 | 已完成产品和架构契约，缺少持久化、权限或外部系统 | 功能中心禁用操作按钮，显示生产依赖 |
 
-当前目录：8 个模块，63 项功能；可使用 19 项、演示闭环 33 项、待生产接入 11 项。运行时契约位于 `backend/app/product_catalog.py`，页面统计直接由该接口计算，避免文档、页面和代码各自维护数字。
+当前目录：8 个模块，63 项功能；可使用 20 项、演示闭环 33 项、待生产接入 10 项。运行时契约位于 `backend/app/product_catalog.py`，页面统计直接由该接口计算，避免文档、页面和代码各自维护数字。
 
 ## 2. 用户入口与信息架构
 
@@ -164,14 +164,14 @@ RCA 必须显示支持证据和反证；模型仅负责归纳，规则、拓扑�
 | ID | 具体功能 | 主要输入 | 主要产出 | 状态 |
 |---|---|---|---|---|
 | admin-datasource | 数据源与连接测试 | Endpoint、凭证引用、范围 | 连接状态、能力清单 | 演示闭环 |
-| admin-model | 模型网关与能力路由 | Provider、Endpoint、凭证引用 | 能力探测、路由策略 | 待生产接入 |
+| admin-model | 大模型接入与默认路由 | Provider、Endpoint、模型 ID、凭证 | 连接状态、默认模型、可用能力 | 可使用 |
 | admin-connectors | 企业系统连接器 | Adapter、权限范围 | 健康、工具/动作 Schema | 待生产接入 |
 | admin-iam | 租户、SSO 与 RBAC/ABAC | 身份源、角色、策略 | 有效权限、策略版本 | 待生产接入 |
 | admin-policy | 策略、Runbook 与审批矩阵 | 动作、风险、审批人 | 可发布策略、回滚版本 | 待生产接入 |
 | admin-audit | 统一审计与检索 | 人员、资源、动作、Trace | 审计记录、受控导出 | 待生产接入 |
 | admin-health | 平台健康与降级 | 环境 | 依赖健康、降级状态 | 演示闭环 |
 
-模型网关必须支持 OpenAI-compatible、Ollama、vLLM、TGI、Xinference 和企业自建 HTTP/gRPC；模型注册包含能力、上下文、数据边界、成本、健康、评测结果和降级顺序。local-only 工作区禁止路由公网。
+当前实现支持 OpenAI、DeepSeek、通义千问、智谱、Moonshot、Ollama、vLLM 和自定义 OpenAI-compatible 服务的登记、连接测试及默认激活。生产模型网关还需扩展 TGI、Xinference 和企业自建 HTTP/gRPC Adapter；模型注册最终包含能力、上下文、数据边界、成本、健康、评测结果和降级顺序。local-only 工作区禁止路由公网。
 
 ## 11. 角色操作路径
 

@@ -60,6 +60,7 @@ import "./knowledge.css";
 import "./capabilities.css";
 import "./polish.css";
 import "./chatbi.css";
+import "./models.css";
 
 type Page =
   | "workbench"
@@ -71,6 +72,7 @@ type Page =
   | "sql-optimizer"
   | "scenarios"
   | "knowledge"
+  | "models"
   | "settings";
 const ROUTABLE_PAGES: Page[] = [
   "workbench",
@@ -82,6 +84,7 @@ const ROUTABLE_PAGES: Page[] = [
   "sql-optimizer",
   "scenarios",
   "knowledge",
+  "models",
   "settings",
 ];
 function pageFromLocation(): Page {
@@ -156,6 +159,47 @@ type DashboardReport = {
   rows: unknown[][];
   accepted_by: string;
   created_at: string;
+};
+type ModelProvider = {
+  id:
+    | "openai"
+    | "deepseek"
+    | "qwen"
+    | "zhipu"
+    | "moonshot"
+    | "ollama"
+    | "vllm"
+    | "custom";
+  name: string;
+  deployment: "public" | "private";
+  protocol: string;
+  default_base_url: string;
+  model_placeholder: string;
+  api_key_required: boolean;
+  description: string;
+};
+type ModelConnection = {
+  id: string;
+  name: string;
+  provider: ModelProvider["id"];
+  provider_name: string;
+  deployment: "public" | "private";
+  protocol: string;
+  base_url: string;
+  model: string;
+  status: "ready" | "unverified" | "error";
+  is_default: boolean;
+  has_credential: boolean;
+  capabilities: string[];
+  last_error?: string;
+  last_tested_at?: string;
+  created_at: string;
+};
+type ModelReadiness = {
+  ready: boolean;
+  source: "registry" | "environment" | "none";
+  connection_id?: string;
+  model?: string;
 };
 type OptimizerVersion = {
   minor: string;
@@ -489,6 +533,7 @@ function App() {
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [focusCapabilitySearch, setFocusCapabilitySearch] = useState(false);
   const [querySeed, setQuerySeed] = useState("");
+  const [modelOnboarding, setModelOnboarding] = useState(false);
   type NavItem = [Page, string, React.ComponentType<{ size?: number }>];
   type NavGroup = [string, NavItem[]];
   const navGroups: NavGroup[] = [
@@ -516,6 +561,7 @@ function App() {
         ["scenarios", "场景中心", Workflow],
       ],
     ],
+    ["平台管理", [["models", "模型接入", CloudCog]]],
   ];
   const nav = navGroups.flatMap(([, items]) => items);
   const activeGroup = navGroups.find(([, items]) =>
@@ -560,16 +606,24 @@ function App() {
       setCatalogLoading(false);
     }
   };
-  if (!logged)
-    return (
-      <Login
-        onLogin={() => {
-          setLogged(true);
-          navigatePage(page);
-          void loadCatalog();
-        }}
-      />
-    );
+  const handleLogin = async () => {
+    setLogged(true);
+    void loadCatalog();
+    try {
+      const readiness = await api<ModelReadiness>("/models/readiness");
+      if (!readiness.ready) {
+        setModelOnboarding(true);
+        navigatePage("models");
+      } else {
+        setModelOnboarding(false);
+        navigatePage(page);
+      }
+    } catch {
+      setModelOnboarding(true);
+      navigatePage("models");
+    }
+  };
+  if (!logged) return <Login onLogin={() => void handleLogin()} />;
   return (
     <div className="app">
       <aside className="app-sidebar">
@@ -626,6 +680,7 @@ function App() {
             title="退出登录"
             onClick={() => {
               setLogged(false);
+              setModelOnboarding(false);
               navigatePage("workbench");
             }}
           >
@@ -700,6 +755,13 @@ function App() {
         {page === "incidents" && <Incidents setPage={navigatePage} />}{" "}
         {page === "scenarios" && <ScenarioCenter />}{" "}
         {page === "knowledge" && <KnowledgeBasePage />}{" "}
+        {page === "models" && (
+          <ModelConnectionsPage
+            onboarding={modelOnboarding}
+            onComplete={() => setModelOnboarding(false)}
+            enterWorkspace={() => navigatePage("workbench")}
+          />
+        )}{" "}
         {page === "sql-optimizer" && <SQLOptimizerPage />}{" "}
         {page === "assets" && <AssetsV2 setPage={navigatePage} />}{" "}
         {page === "catalog" && (
@@ -709,7 +771,7 @@ function App() {
             loadCatalog={loadCatalog}
           />
         )}
-        {page === "settings" && <SettingsPage />}
+        {page === "settings" && <SettingsPage setPage={navigatePage} />}
       </main>
     </div>
   );
@@ -1231,9 +1293,475 @@ function Metric({
   );
 }
 
+function ModelConnectionsPage({
+  onboarding,
+  onComplete,
+  enterWorkspace,
+}: {
+  onboarding: boolean;
+  onComplete: () => void;
+  enterWorkspace: () => void;
+}) {
+  const [providers, setProviders] = useState<ModelProvider[]>([]);
+  const [connections, setConnections] = useState<ModelConnection[]>([]);
+  const [deployment, setDeployment] = useState<"public" | "private">("public");
+  const [providerId, setProviderId] = useState<ModelProvider["id"]>("openai");
+  const [showForm, setShowForm] = useState(onboarding);
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [completed, setCompleted] = useState(false);
+  const [form, setForm] = useState({
+    name: "OpenAI",
+    base_url: "https://api.openai.com/v1",
+    model: "",
+    api_key: "",
+    set_default: true,
+  });
+
+  const loadConnections = async () => {
+    const items = await api<ModelConnection[]>("/models/connections");
+    setConnections(items);
+    return items;
+  };
+  useEffect(() => {
+    Promise.all([api<ModelProvider[]>("/models/providers"), loadConnections()])
+      .then(([items]) => setProviders(items))
+      .catch((reason) =>
+        setError(reason instanceof Error ? reason.message : "模型配置加载失败"),
+      );
+  }, []);
+  useEffect(() => {
+    if (onboarding) setShowForm(true);
+  }, [onboarding]);
+
+  const chooseProvider = (provider: ModelProvider) => {
+    setProviderId(provider.id);
+    setDeployment(provider.deployment);
+    setForm({
+      name: provider.name,
+      base_url: provider.default_base_url,
+      model: "",
+      api_key: "",
+      set_default: true,
+    });
+    setError("");
+  };
+  const switchDeployment = (next: "public" | "private") => {
+    setDeployment(next);
+    const provider = providers.find((item) => item.deployment === next);
+    if (provider) chooseProvider(provider);
+  };
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy("create");
+    setError("");
+    setMessage("");
+    try {
+      const item = await api<ModelConnection>("/models/connections", {
+        method: "POST",
+        body: JSON.stringify({
+          ...form,
+          provider: providerId,
+          deployment,
+          test_on_create: true,
+        }),
+      });
+      await loadConnections();
+      if (item.status === "ready") {
+        setCompleted(true);
+        setShowForm(false);
+        onComplete();
+        setMessage(`${item.name} 已连接并设为默认模型`);
+      } else {
+        setError(
+          item.last_error || "模型连接测试未通过，请检查地址、模型 ID 和凭证",
+        );
+      }
+      setForm((current) => ({ ...current, api_key: "" }));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "模型添加失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const testModel = async (id: string) => {
+    setBusy(id);
+    setError("");
+    try {
+      const item = await api<ModelConnection>(
+        `/models/connections/${id}/test`,
+        { method: "POST" },
+      );
+      await loadConnections();
+      setMessage(
+        item.status === "ready"
+          ? `${item.name} 连接正常`
+          : item.last_error || "连接测试失败",
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "连接测试失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const activate = async (id: string) => {
+    setBusy(id);
+    try {
+      const item = await api<ModelConnection>(
+        `/models/connections/${id}/activate`,
+        { method: "POST" },
+      );
+      await loadConnections();
+      setMessage(`${item.name} 已设为默认模型`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "默认模型设置失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const remove = async (id: string) => {
+    setBusy(id);
+    try {
+      const response = await fetch(`${API_BASE}/models/connections/${id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) throw new Error(await response.text());
+      await loadConnections();
+      setMessage("模型连接已移除");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "模型移除失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const selected = providers.find((item) => item.id === providerId);
+  const visibleProviders = providers.filter(
+    (item) => item.deployment === deployment,
+  );
+  return (
+    <section className="content models-page">
+      <div className="section-head">
+        <div>
+          <span className="eyebrow">
+            {onboarding
+              ? "首次配置 · 第 1 步"
+              : "模型注册 · 连接测试 · 默认路由"}
+          </span>
+          <h1>{onboarding ? "先连接一个大模型" : "模型接入"}</h1>
+          <p className="section-subtitle">
+            {onboarding
+              ? "完成连接后，智能问数、知识库和 AIOps 才能使用模型推理。"
+              : "统一管理公有 API 与企业私有推理服务。"}
+          </p>
+        </div>
+        {!onboarding && (
+          <button className="primary" onClick={() => setShowForm(true)}>
+            <Plus size={16} />
+            添加模型
+          </button>
+        )}
+      </div>
+      {message && (
+        <div className="notice">
+          <CheckCircle2 size={15} />
+          {message}
+          <button onClick={() => setMessage("")} aria-label="关闭提示">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+      {error && <div className="error-banner">{error}</div>}
+      {completed && (
+        <div className="model-complete panel">
+          <div className="model-complete-icon">
+            <CircleCheck size={24} />
+          </div>
+          <div>
+            <b>模型连接已就绪</b>
+            <span>
+              默认模型已用于 Text2SQL 和图表推理，并可供后续 AI 任务复用。
+            </span>
+          </div>
+          <button className="primary" onClick={enterWorkspace}>
+            进入工作台 <ArrowRight size={16} />
+          </button>
+        </div>
+      )}
+      {showForm && (
+        <div className="model-setup panel">
+          <div className="model-provider-pane">
+            <div className="segmented model-deployment-tabs">
+              <button
+                className={deployment === "public" ? "active" : ""}
+                onClick={() => switchDeployment("public")}
+              >
+                <CloudCog size={15} />
+                公有模型
+              </button>
+              <button
+                className={deployment === "private" ? "active" : ""}
+                onClick={() => switchDeployment("private")}
+              >
+                <Server size={15} />
+                私有模型
+              </button>
+            </div>
+            <div className="model-provider-list">
+              {visibleProviders.map((provider) => (
+                <button
+                  key={provider.id}
+                  className={provider.id === providerId ? "active" : ""}
+                  onClick={() => chooseProvider(provider)}
+                >
+                  <span className="provider-mark">
+                    {provider.name.slice(0, 1)}
+                  </span>
+                  <span>
+                    <b>{provider.name}</b>
+                    <small>{provider.description}</small>
+                  </span>
+                  <ChevronRight size={15} />
+                </button>
+              ))}
+            </div>
+          </div>
+          <form className="model-connection-form" onSubmit={submit}>
+            <div className="panel-head">
+              <div>
+                <span className="eyebrow">
+                  {selected?.deployment === "public" ? "云端 API" : "企业网络"}
+                </span>
+                <h3>连接 {selected?.name || "模型"}</h3>
+              </div>
+              {!onboarding && (
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setShowForm(false)}
+                  aria-label="关闭"
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
+            <label>
+              连接名称
+              <input
+                required
+                value={form.name}
+                onChange={(event) =>
+                  setForm({ ...form, name: event.target.value })
+                }
+              />
+            </label>
+            <label>
+              服务地址
+              <input
+                required
+                value={form.base_url}
+                onChange={(event) =>
+                  setForm({ ...form, base_url: event.target.value })
+                }
+              />
+            </label>
+            <label>
+              模型 ID
+              <input
+                required
+                value={form.model}
+                onChange={(event) =>
+                  setForm({ ...form, model: event.target.value })
+                }
+                placeholder={selected?.model_placeholder || "模型 ID"}
+              />
+            </label>
+            <label>
+              API Key{" "}
+              {selected?.api_key_required ? (
+                <span className="required-label">必填</span>
+              ) : (
+                <span className="optional-label">可选</span>
+              )}
+              <input
+                type="password"
+                required={selected?.api_key_required}
+                value={form.api_key}
+                onChange={(event) =>
+                  setForm({ ...form, api_key: event.target.value })
+                }
+                placeholder={
+                  selected?.api_key_required
+                    ? "输入服务商 API Key"
+                    : "无鉴权可留空"
+                }
+                autoComplete="new-password"
+              />
+            </label>
+            <label className="model-default-check">
+              <input
+                type="checkbox"
+                checked={form.set_default}
+                onChange={(event) =>
+                  setForm({ ...form, set_default: event.target.checked })
+                }
+              />
+              <span>
+                <b>设为默认模型</b>
+                <small>平台推理任务优先使用此连接</small>
+              </span>
+            </label>
+            <div className="model-security-note">
+              <ShieldCheck size={16} />
+              <span>
+                <b>凭证不会回显</b>
+                <small>
+                  API Key 与连接记录分离保存，页面和接口响应不返回原值。
+                </small>
+              </span>
+            </div>
+            <div className="model-form-actions">
+              {onboarding && (
+                <button
+                  type="button"
+                  className="text-btn"
+                  onClick={() => {
+                    onComplete();
+                    enterWorkspace();
+                  }}
+                >
+                  稍后配置，使用规则模式
+                </button>
+              )}
+              <button
+                className="primary"
+                type="submit"
+                disabled={busy === "create"}
+              >
+                {busy === "create" ? (
+                  <>
+                    <Clock3 size={16} />
+                    测试连接中…
+                  </>
+                ) : (
+                  <>
+                    <PlugZap size={16} />
+                    保存并测试连接
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {!showForm && connections.length === 0 && !completed && (
+        <div className="model-empty panel">
+          <Bot size={34} />
+          <b>尚未接入模型</b>
+          <span>添加一个公有 API 或企业私有推理服务。</span>
+          <button className="primary" onClick={() => setShowForm(true)}>
+            <Plus size={16} />
+            添加模型
+          </button>
+        </div>
+      )}
+      {connections.length > 0 && (
+        <div className="model-connections">
+          <div className="model-list-head">
+            <div>
+              <span className="eyebrow">当前工作空间</span>
+              <h3>已接入模型</h3>
+            </div>
+            <span className="chip">{connections.length} 个连接</span>
+          </div>
+          <div className="model-grid">
+            {connections.map((item) => (
+              <article
+                className={`model-card panel ${item.is_default ? "default" : ""}`}
+                key={item.id}
+              >
+                <div className="model-card-head">
+                  <span className="provider-mark">
+                    {item.provider_name.slice(0, 1)}
+                  </span>
+                  <div>
+                    <h3>{item.name}</h3>
+                    <span>
+                      {item.provider_name} ·{" "}
+                      {item.deployment === "public" ? "公有云" : "私有部署"}
+                    </span>
+                  </div>
+                  {item.is_default && (
+                    <span className="chip success">默认</span>
+                  )}
+                </div>
+                <div className="model-card-body">
+                  <span>
+                    <b>模型</b>
+                    {item.model}
+                  </span>
+                  <span>
+                    <b>地址</b>
+                    {item.base_url}
+                  </span>
+                  <span>
+                    <b>状态</b>
+                    <i className={`model-status ${item.status}`} />
+                    {item.status === "ready"
+                      ? "连接正常"
+                      : item.status === "error"
+                        ? "连接失败"
+                        : "待测试"}
+                  </span>
+                  <span>
+                    <b>凭证</b>
+                    {item.has_credential ? "已配置" : "无鉴权"}
+                  </span>
+                </div>
+                {item.last_error && (
+                  <div className="model-card-error">{item.last_error}</div>
+                )}
+                <div className="model-card-actions">
+                  <button
+                    className="secondary"
+                    disabled={busy === item.id}
+                    onClick={() => void testModel(item.id)}
+                  >
+                    <RefreshCw size={14} />
+                    测试
+                  </button>
+                  {!item.is_default && (
+                    <button
+                      className="secondary"
+                      disabled={item.status !== "ready" || busy === item.id}
+                      onClick={() => void activate(item.id)}
+                    >
+                      <CheckCircle2 size={14} />
+                      设为默认
+                    </button>
+                  )}
+                  <button
+                    className="icon-button danger-button"
+                    title="移除连接"
+                    aria-label={`移除 ${item.name}`}
+                    disabled={busy === item.id}
+                    onClick={() => void remove(item.id)}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 type SettingsSection = "general" | "model" | "connectors" | "security";
 
-function SettingsPage() {
+function SettingsPage({ setPage }: { setPage: (page: Page) => void }) {
   const [section, setSection] = useState<SettingsSection>("general");
   const [feedback, setFeedback] = useState("");
   const sections = [
@@ -1324,39 +1852,20 @@ function SettingsPage() {
             <>
               <SettingsHeader
                 title="模型网关"
-                description="统一接入 OpenAI-Compatible、Ollama、vLLM 和企业自建模型。"
+                description="模型连接、凭证和默认路由统一在模型接入模块维护。"
               />
-              <div className="settings-form-grid">
-                <SettingsField label="网关地址" wide>
-                  <input defaultValue="http://host.docker.internal:11434" />
-                </SettingsField>
-                <SettingsField label="默认模型">
-                  <input placeholder="例如 qwen2.5:14b" />
-                </SettingsField>
-                <SettingsField label="调用策略">
-                  <select defaultValue="local">
-                    <option value="local">仅本地模型</option>
-                    <option value="policy">按数据策略路由</option>
-                  </select>
-                </SettingsField>
-              </div>
               <div className="settings-security-note">
                 <ShieldCheck size={16} />
                 <span>
                   <b>凭证安全</b>
-                  <small>API Key 仅保存凭证引用，页面不会回显密钥。</small>
+                  <small>API Key 与连接记录分离保存，页面不会回显密钥。</small>
                 </span>
               </div>
               <div className="settings-actions">
-                <button
-                  className="secondary"
-                  onClick={() => complete("模型网关连通性检查通过")}
-                >
-                  测试连接
+                <button className="primary" onClick={() => setPage("models")}>
+                  <CloudCog size={16} />
+                  打开模型接入
                 </button>
-                <SettingsSave
-                  onClick={() => complete("模型网关配置已保存在当前会话")}
-                />
               </div>
             </>
           )}

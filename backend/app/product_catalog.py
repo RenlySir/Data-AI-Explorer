@@ -15,6 +15,7 @@ TargetPage = Literal[
     "incidents",
     "sql-optimizer",
     "scenarios",
+    "models",
 ]
 
 
@@ -204,7 +205,7 @@ PRODUCT_MODULES = [
         owner_role="平台管理员",
         features=[
             feature("admin-datasource", "数据源与连接测试", "登记 TiDB/数据库连接并探测网络和只读权限。", ["管理员", "DBA"], "demo", "catalog", "配置连接", ["Endpoint", "凭证引用", "采集范围"], ["连接状态", "能力清单"], ["不回显密钥", "只读账号"]),
-            feature("admin-model", "模型网关与能力路由", "注册 OpenAI-compatible、Ollama、vLLM、TGI 和自建模型。", ["管理员", "AI 工程师"], "planned", None, "待接入", ["Provider", "Endpoint", "凭证引用"], ["能力探测", "路由策略"], ["数据边界", "公网模型需审批", "密钥进 Vault"]),
+            feature("admin-model", "大模型接入与默认路由", "注册公有 OpenAI-compatible API、Ollama、vLLM 和企业自建模型，并选择平台默认模型。", ["管理员", "AI 工程师"], "available", "models", "添加模型", ["Provider", "Endpoint", "模型 ID", "凭证"], ["连接状态", "默认模型", "可用能力"], ["凭证不回显", "私网/HTTPS 主机策略", "连接测试后才能启用"], api_refs=["GET/POST /api/v1/models/connections"]),
             feature("admin-connectors", "企业系统连接器", "管理监控、日志、调度、Git、工单与执行平台 Adapter。", ["管理员", "SRE"], "planned", None, "待接入", ["连接器配置", "权限范围"], ["健康状态", "能力与动作 Schema"], ["最小权限", "超时与熔断", "调用审计"]),
             feature("admin-iam", "租户、SSO 与 RBAC/ABAC", "管理用户、角色、工作区和资源/环境策略。", ["管理员", "安全"], "planned", None, "待接入", ["身份源", "角色", "策略"], ["有效权限", "策略版本"], ["默认拒绝", "生产最小权限"]),
             feature("admin-policy", "策略、Runbook 与审批矩阵", "版本化管理风险规则、动作和审批责任链。", ["管理员", "安全", "值班长"], "planned", None, "待接入", ["动作 Schema", "风险", "审批人"], ["可发布策略", "回滚版本"], ["发布前测试", "双人复核"]),

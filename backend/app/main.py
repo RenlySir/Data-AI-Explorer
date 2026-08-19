@@ -81,6 +81,18 @@ from app.chatbi import (
     inspect_database,
     test_database_source,
 )
+from app.model_registry import (
+    MODEL_CONNECTIONS,
+    MODEL_SECRETS,
+    PROVIDERS,
+    ModelConnection,
+    ModelConnectionCreate,
+    ModelProvider,
+    active_model_config,
+    create_connection,
+    set_default_connection,
+    test_connection,
+)
 
 
 def now_iso() -> str:
@@ -251,6 +263,11 @@ def chart_spec(columns: list[str], rows: list[list[Any]], title: str) -> dict[st
     return {"type": "line", "title": title, "xField": x, "yField": y, "option": {"xAxis": {"type": "category", "data": [row[0] for row in rows]}, "yAxis": {"type": "value"}, "series": [{"type": "line", "smooth": True, "data": [row[numeric_index] for row in rows]}]}}
 
 
+def model_chat_url(base_url: str) -> str:
+    base = base_url.rstrip("/")
+    return base + "/chat/completions" if base.endswith(("/v1", "/v4")) else base + "/v1/chat/completions"
+
+
 async def chatbi_chart_spec(question: str, columns: list[str], rows: list[list[Any]]) -> dict[str, Any]:
     """Choose a compact ECharts visualization, using the model gateway when configured."""
     if not columns or not rows:
@@ -266,8 +283,7 @@ async def chatbi_chart_spec(question: str, columns: list[str], rows: list[list[A
     if any(word in question.lower() for word in ("占比", "比例", "构成", "份额", "pie")):
         chart_type = "pie"
 
-    endpoint = os.getenv("MODEL_GATEWAY_BASE_URL", "").strip()
-    model = os.getenv("MODEL_GATEWAY_MODEL", "").strip()
+    endpoint, model, api_key = active_model_config()
     if endpoint and model:
         payload = {
             "model": model,
@@ -284,11 +300,11 @@ async def chatbi_chart_spec(question: str, columns: list[str], rows: list[list[A
             ],
         }
         headers = {}
-        if os.getenv("MODEL_GATEWAY_API_KEY"):
-            headers["Authorization"] = f"Bearer {os.environ['MODEL_GATEWAY_API_KEY']}"
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         try:
             async with httpx.AsyncClient(timeout=12) as client:
-                response = await client.post(endpoint.rstrip("/") + "/v1/chat/completions", json=payload, headers=headers)
+                response = await client.post(model_chat_url(endpoint), json=payload, headers=headers)
                 response.raise_for_status()
                 candidate = response.json()["choices"][0]["message"]["content"].strip().lower()
             if candidate in {"line", "bar", "pie", "table"}:
@@ -378,16 +394,15 @@ def catalog_context(catalog: TidbCatalog) -> str:
 
 
 async def model_sql(question: str, catalog: TidbCatalog) -> str:
-    endpoint = os.getenv("MODEL_GATEWAY_BASE_URL", "").strip()
-    model = os.getenv("MODEL_GATEWAY_MODEL", "")
+    endpoint, model, api_key = active_model_config()
     if not endpoint or not model:
         return heuristic_sql(question, catalog)
     payload = {"model": model, "temperature": 0, "messages": [{"role": "system", "content": "You generate one read-only TiDB SELECT statement. Return SQL only."}, {"role": "user", "content": f"Schema:\n{catalog_context(catalog)}\nQuestion: {question}"}]}
     headers = {}
-    if os.getenv("MODEL_GATEWAY_API_KEY"):
-        headers["Authorization"] = f"Bearer {os.environ['MODEL_GATEWAY_API_KEY']}"
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(endpoint.rstrip("/") + "/v1/chat/completions", json=payload, headers=headers)
+        response = await client.post(model_chat_url(endpoint), json=payload, headers=headers)
         response.raise_for_status()
         content = response.json()["choices"][0]["message"]["content"]
     return content.replace("```sql", "").replace("```", "").strip()
@@ -654,6 +669,65 @@ def datasource_or_404(datasource_id: str) -> DataSourceRecord:
 @app.get("/health", tags=["system"])
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "data-ai-explorer", "time": now_iso()}
+
+
+@app.get("/api/v1/models/providers", response_model=list[ModelProvider], tags=["models"])
+def model_providers() -> list[ModelProvider]:
+    return PROVIDERS
+
+
+@app.get("/api/v1/models/readiness", tags=["models"])
+def model_readiness() -> dict[str, Any]:
+    active_registry = next((item for item in MODEL_CONNECTIONS.values() if item.is_default and item.status == "ready"), None)
+    endpoint, model, _ = active_model_config()
+    return {
+        "ready": bool(active_registry or (endpoint and model)),
+        "source": "registry" if active_registry else ("environment" if endpoint and model else "none"),
+        "connection_id": active_registry.id if active_registry else None,
+        "model": active_registry.model if active_registry else (model or None),
+    }
+
+
+@app.get("/api/v1/models/connections", response_model=list[ModelConnection], tags=["models"])
+def model_connections() -> list[ModelConnection]:
+    return list(reversed(list(MODEL_CONNECTIONS.values())))
+
+
+@app.post("/api/v1/models/connections", response_model=ModelConnection, status_code=201, tags=["models"])
+def model_create_connection(payload: ModelConnectionCreate) -> ModelConnection:
+    try:
+        item = create_connection(payload)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if payload.test_on_create:
+        return test_connection(item, set_default=payload.set_default)
+    return item
+
+
+@app.post("/api/v1/models/connections/{connection_id}/test", response_model=ModelConnection, tags=["models"])
+def model_test_connection(connection_id: str) -> ModelConnection:
+    item = MODEL_CONNECTIONS.get(connection_id)
+    if not item:
+        raise HTTPException(404, "model connection not found")
+    return test_connection(item)
+
+
+@app.post("/api/v1/models/connections/{connection_id}/activate", response_model=ModelConnection, tags=["models"])
+def model_activate_connection(connection_id: str) -> ModelConnection:
+    if connection_id not in MODEL_CONNECTIONS:
+        raise HTTPException(404, "model connection not found")
+    try:
+        return set_default_connection(connection_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.delete("/api/v1/models/connections/{connection_id}", status_code=204, tags=["models"])
+def model_delete_connection(connection_id: str) -> None:
+    if connection_id not in MODEL_CONNECTIONS:
+        raise HTTPException(404, "model connection not found")
+    MODEL_CONNECTIONS.pop(connection_id, None)
+    MODEL_SECRETS.pop(connection_id, None)
 
 
 @app.get("/api/v1/workbench/summary", tags=["workbench"])

@@ -16,6 +16,16 @@ uvicorn app.main:app --reload --port 8080
 
 OpenAPI is available at http://localhost:8080/docs. The API is prefixed with `/api/v1`. Localhost origins and dynamic development ports are enabled by default; production deployments should set `CORS_ALLOW_LOCALHOST=false` and provide exact HTTPS origins in `CORS_ALLOW_ORIGINS`.
 
+## Model registry APIs
+
+- `GET /api/v1/models/providers`: list supported public and private provider templates.
+- `GET/POST /api/v1/models/connections`: list or register model connections; API Keys are never returned.
+- `POST /api/v1/models/connections/{id}/test`: probe `/models` or Ollama `/api/tags`, then run a minimal Chat Completion before marking the connection ready.
+- `POST /api/v1/models/connections/{id}/activate`: select a verified connection as the platform default.
+- `DELETE /api/v1/models/connections/{id}`: remove the connection and its in-memory secret.
+
+The active connection is used by Text2SQL and chart selection before environment-based gateway settings. Public hosts require HTTPS; private hosts require `MODEL_ALLOW_PRIVATE_HOSTS=true` or an exact `MODEL_ALLOWED_HOSTS` entry. Production must disable the broad private-host fallback and replace in-memory secrets with Vault/OpenBao/KMS references.
+
 ## Demo flow
 
 1. `GET /api/v1/workbench/summary` loads the dashboard.
