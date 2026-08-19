@@ -22,6 +22,13 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8080
 ```
 
+Run the backend test suite with the development requirements:
+
+```bash
+pip install -r requirements-dev.txt
+PYTHONPATH=. pytest -q tests
+```
+
 OpenAPI is available at http://localhost:8080/docs. The API is prefixed with `/api/v1`. Localhost origins and dynamic development ports are enabled by default; production deployments should set `CORS_ALLOW_LOCALHOST=false` and provide exact HTTPS origins in `CORS_ALLOW_ORIGINS`.
 
 For the three-node TiDB demo, set `AEGIS_NODE_ROLE`, `AEGIS_TIDB_ENDPOINTS`, `AEGIS_TIDB_SQL_PORT=4100`, and `AEGIS_TIDB_STATUS_PORT=11080`. `/health` reports the node role and deployment version; `/api/v1/deployment/status` probes all configured TiDB status endpoints without exposing credentials.
