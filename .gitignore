@@ -1,0 +1,21 @@
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local configuration and data
+.env
+*.log
+.DS_Store
+.idea/
+.vscode/
+
+# Test and coverage output
+.pytest_cache/
+coverage/
