@@ -582,9 +582,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
 function App() {
   const [logged, setLogged] = useState(false);
   const [page, setPage] = useState<Page>(pageFromLocation);
-  const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [notice, setNotice] = useState("");
-  const [catalogLoading, setCatalogLoading] = useState(false);
   const [focusCapabilitySearch, setFocusCapabilitySearch] = useState(false);
   const [querySeed, setQuerySeed] = useState("");
   const [modelOnboarding, setModelOnboarding] = useState(false);
@@ -651,24 +649,8 @@ function App() {
   useEffect(() => {
     if (page !== "capabilities") setFocusCapabilitySearch(false);
   }, [page]);
-  const loadCatalog = async (endpoint = "demo://tidb") => {
-    setCatalogLoading(true);
-    try {
-      const result = await api<Catalog>("/tidb/mcp/introspect", {
-        method: "POST",
-        body: JSON.stringify({ endpoint }),
-      });
-      setCatalog(result);
-      setNotice("已采集 " + result.schemas.length + " 个 Schema");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "TiDB MCP 连接失败");
-    } finally {
-      setCatalogLoading(false);
-    }
-  };
   const handleLogin = async () => {
     setLogged(true);
-    void loadCatalog();
     try {
       const readiness = await api<ModelReadiness>("/models/readiness");
       if (!readiness.ready) {
@@ -806,11 +788,7 @@ function App() {
           />
         )}{" "}
         {page === "query" && (
-          <QueryV2
-            catalog={catalog}
-            loadCatalog={loadCatalog}
-            initialQuestion={querySeed}
-          />
+          <QueryV2 initialQuestion={querySeed} />
         )}{" "}
         {page === "incidents" && <Incidents setPage={navigatePage} />}{" "}
         {page === "scenarios" && <ScenarioCenter />}{" "}
@@ -2900,13 +2878,11 @@ function ChartView({ option }: { option?: EChartsOption }) {
   }, [option]);
   return <div className="echart" ref={ref} />;
 }
-type QueryModule = "datasources" | "chatbi" | "dashboard";
+type QueryModule = "chatbi" | "dashboard";
 
 function QueryV2({
   initialQuestion = "",
 }: {
-  catalog: Catalog | null;
-  loadCatalog: (endpoint?: string) => Promise<void>;
   initialQuestion?: string;
 }) {
   const [module, setModule] = useState<QueryModule>("chatbi");
@@ -2920,16 +2896,6 @@ function QueryV2({
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [showAdd, setShowAdd] = useState(false);
-  const [sourceForm, setSourceForm] = useState({
-    name: "",
-    kind: "tidb" as "mysql" | "tidb",
-    host: "",
-    port: "4000",
-    database: "",
-    username: "root",
-    password: "",
-  });
 
   const loadSources = async () => {
     try {
@@ -2985,76 +2951,6 @@ function QueryV2({
       setRunning(false);
     }
   };
-  const addDatabase = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setError("");
-    try {
-      const item = await api<DataSourceRecord>("/chatbi/datasources", {
-        method: "POST",
-        body: JSON.stringify({
-          ...sourceForm,
-          port: Number(sourceForm.port),
-          test_on_create: true,
-        }),
-      });
-      setDatasources((current) => [item, ...current]);
-      setSourceId(item.id);
-      setShowAdd(false);
-      setSourceForm({
-        name: "",
-        kind: "tidb",
-        host: "",
-        port: "4000",
-        database: "",
-        username: "root",
-        password: "",
-      });
-      setMessage(
-        item.status === "ready"
-          ? `已连接 ${item.name}`
-          : `已保存 ${item.name}，连接测试未通过`,
-      );
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "数据源添加失败");
-    }
-  };
-  const uploadCsv = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const body = new FormData();
-    body.append("file", file);
-    try {
-      const item = await api<DataSourceRecord>("/chatbi/datasources/upload", {
-        method: "POST",
-        headers: {},
-        body,
-      });
-      setDatasources((current) => [item, ...current]);
-      setSourceId(item.id);
-      setMessage(`已添加文件数据源 ${item.name}`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "文件数据源添加失败");
-    }
-    event.target.value = "";
-  };
-  const testSource = async (id: string) => {
-    try {
-      const item = await api<DataSourceRecord>(
-        `/chatbi/datasources/${id}/test`,
-        { method: "POST" },
-      );
-      setDatasources((current) =>
-        current.map((source) => (source.id === id ? item : source)),
-      );
-      setMessage(
-        item.status === "ready"
-          ? "连接测试通过"
-          : item.last_error || "连接测试未通过",
-      );
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "连接测试失败");
-    }
-  };
   const approve = async () => {
     if (!result || !sourceId) return;
     const title = result.chart?.title || result.question;
@@ -3091,7 +2987,6 @@ function QueryV2({
     string,
     React.ComponentType<{ size?: number }>,
   ][] = [
-    ["datasources", "数据源", "接入 TiDB、MySQL 与文件", PlugZap],
     ["chatbi", "ChatBI", "自然语言生成可视化", MessageSquare],
     ["dashboard", "大屏展示", "复用已认可报表", MonitorUp],
   ];
@@ -3099,18 +2994,12 @@ function QueryV2({
     <section className="content query-page chatbi-page">
       <div className="section-head">
         <div>
-          <span className="eyebrow">智能问数 · 数据源 · ChatBI · 大屏</span>
+          <span className="eyebrow">智能问数 · ChatBI · 大屏</span>
           <h1>从问题到可复用报表</h1>
           <p className="section-subtitle">
-            先选择数据源，再提问和核验，认可的结果一键沉淀到大屏。
+            从统一数据源管理选择数据源，再提问和核验，认可的结果一键沉淀到大屏。
           </p>
         </div>
-        {module === "datasources" && (
-          <button className="primary" onClick={() => setShowAdd(true)}>
-            <Plus size={16} />
-            添加数据源
-          </button>
-        )}
       </div>
       <div
         className="query-module-tabs"
@@ -3147,98 +3036,6 @@ function QueryV2({
         </div>
       )}
       {error && <div className="error-banner">{error}</div>}
-      {module === "datasources" && (
-        <div className="chatbi-source-layout">
-          <div className="panel source-guide">
-            <div className="panel-head">
-              <div className="panel-title">
-                <Server size={18} />
-                <span>
-                  <h3>数据源接入</h3>
-                  <small>凭证仅保存在后端进程内存，不会回显</small>
-                </span>
-              </div>
-            </div>
-            <p>
-              数据库连接会读取 Schema、表结构和字段 Comment。CSV/Parquet 使用
-              DuckDB 隔离分析。
-            </p>
-            <div className="source-type-hints">
-              <span>
-                <Link2 size={15} />
-                TiDB / MySQL
-              </span>
-              <span>
-                <FileSpreadsheet size={15} />
-                CSV / Parquet
-              </span>
-            </div>
-            <label className="secondary file-button source-upload">
-              <UploadCloud size={16} />
-              上传 CSV/Parquet
-              <input type="file" accept=".csv,.parquet" onChange={uploadCsv} />
-            </label>
-          </div>
-          <div className="source-list panel">
-            <div className="panel-head">
-              <h3>已添加数据源</h3>
-              <span className="chip">{datasources.length} 个</span>
-            </div>
-            {datasources.map((item) => (
-              <div className="source-row" key={item.id}>
-                <div className={`source-icon ${item.kind}`}>
-                  <>
-                    {item.kind === "csv" ? (
-                      <FileSpreadsheet size={17} />
-                    ) : (
-                      <Database size={17} />
-                    )}
-                  </>
-                </div>
-                <div className="row-main">
-                  <b>{item.name}</b>
-                  <span>
-                    {item.kind.toUpperCase()} ·{" "}
-                    {item.database || item.dataset_id || "文件数据"}
-                    {item.host ? ` · ${item.host}:${item.port}` : ""}
-                  </span>
-                  {item.last_error && (
-                    <small className="source-error">{item.last_error}</small>
-                  )}
-                </div>
-                <span
-                  className={`chip ${item.status === "ready" ? "success" : item.status === "error" ? "danger" : ""}`}
-                >
-                  {item.status === "ready"
-                    ? "可用"
-                    : item.status === "error"
-                      ? "连接失败"
-                      : "待测试"}
-                </span>
-                {item.kind !== "csv" && item.host && (
-                  <button
-                    className="icon-button"
-                    title="测试连接"
-                    aria-label={`测试 ${item.name}`}
-                    onClick={() => void testSource(item.id)}
-                  >
-                    <RefreshCw size={15} />
-                  </button>
-                )}
-                <button
-                  className="text-btn"
-                  onClick={() => {
-                    setSourceId(item.id);
-                    setModule("chatbi");
-                  }}
-                >
-                  去提问 <ChevronRight size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
       {module === "chatbi" && (
         <div className="chatbi-workspace">
           <div className="chatbi-conversation panel">
@@ -3463,141 +3260,6 @@ function QueryV2({
               ))}
             </div>
           )}
-        </div>
-      )}
-      {showAdd && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setShowAdd(false);
-          }}
-        >
-          <form className="modal-card source-modal" onSubmit={addDatabase}>
-            <div className="panel-head">
-              <div>
-                <span className="eyebrow">新建连接</span>
-                <h3>添加数据库数据源</h3>
-              </div>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => setShowAdd(false)}
-                aria-label="关闭"
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <label>
-              连接类型
-              <select
-                value={sourceForm.kind}
-                onChange={(event) =>
-                  setSourceForm({
-                    ...sourceForm,
-                    kind: event.target.value as "mysql" | "tidb",
-                    port: event.target.value === "tidb" ? "4000" : "3306",
-                  })
-                }
-              >
-                <option value="tidb">TiDB</option>
-                <option value="mysql">MySQL</option>
-              </select>
-            </label>
-            <label>
-              名称
-              <input
-                required
-                value={sourceForm.name}
-                onChange={(event) =>
-                  setSourceForm({ ...sourceForm, name: event.target.value })
-                }
-                placeholder="例如：生产 TiDB 分析库"
-              />
-            </label>
-            <div className="form-row">
-              <label>
-                主机
-                <input
-                  required
-                  value={sourceForm.host}
-                  onChange={(event) =>
-                    setSourceForm({ ...sourceForm, host: event.target.value })
-                  }
-                  placeholder="db.example.internal"
-                />
-              </label>
-              <label>
-                端口
-                <input
-                  required
-                  type="number"
-                  value={sourceForm.port}
-                  onChange={(event) =>
-                    setSourceForm({ ...sourceForm, port: event.target.value })
-                  }
-                />
-              </label>
-            </div>
-            <div className="form-row">
-              <label>
-                数据库
-                <input
-                  required
-                  value={sourceForm.database}
-                  onChange={(event) =>
-                    setSourceForm({
-                      ...sourceForm,
-                      database: event.target.value,
-                    })
-                  }
-                  placeholder="analytics"
-                />
-              </label>
-              <label>
-                用户名
-                <input
-                  required
-                  value={sourceForm.username}
-                  onChange={(event) =>
-                    setSourceForm({
-                      ...sourceForm,
-                      username: event.target.value,
-                    })
-                  }
-                />
-              </label>
-            </div>
-            <label>
-              密码
-              <input
-                type="password"
-                value={sourceForm.password}
-                onChange={(event) =>
-                  setSourceForm({ ...sourceForm, password: event.target.value })
-                }
-                placeholder="留空表示无密码"
-                autoComplete="new-password"
-              />
-            </label>
-            <div className="modal-note">
-              <ShieldCheck size={15} />
-              密码仅用于本次连接测试和后端进程内存中的连接，不会在列表回显。
-            </div>
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => setShowAdd(false)}
-              >
-                取消
-              </button>
-              <button className="primary" type="submit">
-                <PlugZap size={15} />
-                保存并测试连接
-              </button>
-            </div>
-          </form>
         </div>
       )}
     </section>
