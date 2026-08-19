@@ -1,0 +1,62 @@
+.app-sidebar {
+  transition:
+    width 0.18s ease,
+    padding 0.18s ease;
+}
+.app main {
+  transition: margin-left 0.18s ease;
+}
+.sidebar-collapsed .app-sidebar {
+  width: 72px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+.sidebar-collapsed main {
+  margin-left: 72px;
+}
+.sidebar-collapsed .logo {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+.sidebar-collapsed .logo-copy,
+.sidebar-collapsed .workspace-copy,
+.sidebar-collapsed .nav-label,
+.sidebar-collapsed .nav-section,
+.sidebar-collapsed .nav-chevron {
+  display: none;
+}
+.sidebar-collapsed .workspace-switch {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+.sidebar-collapsed .nav {
+  justify-content: center;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+.topbar {
+  min-height: 64px;
+}
+.page-context {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sidebar-toggle {
+  flex: 0 0 auto;
+}
+.environment-badge.production {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #b91c1c;
+}
+.environment-badge.production .status-dot {
+  background: #dc2626;
+}
+@media (max-width: 900px) {
+  .sidebar-collapsed main {
+    margin-left: 70px;
+  }
+}

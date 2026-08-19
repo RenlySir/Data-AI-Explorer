@@ -40,7 +40,7 @@ AI Worker：`workers/ai_worker/{gateway,rag,query,rca,evaluation}`；Connector W
 |---|---|---|
 | Java/Spring | Java 21、Spring Boot 3.4、Spring Security 6 | 控制面 API |
 | Python | 3.12、FastAPI、Pydantic 2 | AI/采集 Worker |
-| 数据库 | PostgreSQL 16 | 控制面权威数据 |
+| 数据库 | TiDB 8.5+/9.x | 控制面权威数据，MySQL 协议，TiKV + 可选 TiFlash |
 | 搜索 | OpenSearch 2.x | 资产、日志、事件检索 |
 | 缓存 | Redis 7.x | 会话、限流、短期状态 |
 | 消息 | Kafka 3.x | 事件流、Outbox 消费 |
@@ -55,7 +55,7 @@ AI Worker：`workers/ai_worker/{gateway,rag,query,rca,evaluation}`；Connector W
 
 ### 4.1 公共字段与约束
 
-所有业务表包含：`id uuidv7`、`tenant_id`、`created_at`、`updated_at`、`created_by`、`version`、`deleted_at`（适用时）。时间以 UTC `timestamptz` 保存。启用 PostgreSQL RLS，应用层每个事务设置 `app.tenant_id`。
+所有业务表包含：`id`（UUIDv7/Snowflake 字符串）、`tenant_id`、`created_at`、`updated_at`、`created_by`、`version`、`deleted_at`（适用时）。时间以 UTC `DATETIME(6)` 保存。TiDB 不使用 PostgreSQL RLS；租户条件由 Repository 强制注入，并以数据库账号、视图和策略层做第二道隔离。时间增长表使用 TiDB Range 分区，所有唯一键包含分区键。TiDB 的 `SET TRANSACTION READ ONLY` 在当前版本为受控 no-op，查询只读必须由 AST、只读账号、超时和资源组共同保证。
 
 所有状态变化写 `domain_event` 或专用历史表；删除优先逻辑删除。敏感字段使用 envelope encryption，数据库内只保存密文和 key_version。
 
@@ -182,6 +182,19 @@ Connector Worker 使用 Connector SPI：`testConnection`、`discoverSchemas`、`
 
 数据库 SQL 解析优先使用 SQLGlot/Apache Calcite；解析结果包含表级和字段级关系。OpenLineage 事件作为补充来源。边合并使用 `(tenant_id, source_urn, target_urn, edge_type)` 唯一键和可信度更新规则。
 
+当前 FastAPI 切片提供以下可开发契约：
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| POST | `/api/v1/data-relationships/{datasource_id}/collect` | 采集全部授权业务 Schema、表、字段 Comment 和外键，生成关系快照 |
+| GET | `/api/v1/data-relationships/{datasource_id}` | 读取当前节点、边和 SQL 观察记录 |
+| POST | `/api/v1/data-relationships/{datasource_id}/sql-observations` | 接收手工或 Connector 推送的 SELECT/WITH SQL，AST 解析关系 |
+| POST | `/api/v1/data-relationships/{datasource_id}/collect-sql` | 增量拉取 TiDB 语句摘要并按 Digest/执行次数去重 |
+| GET | `/api/v1/data-relationships/{datasource_id}/sql-collector` | 查询服务端持续采集开关、周期、最近成功时间和错误 |
+| PUT | `/api/v1/data-relationships/{datasource_id}/sql-collector` | 启停服务端进程内采集任务；页面关闭后仍运行 |
+
+`backend/app/data_relationships.py` 负责 SQLGlot 解析、别名解析、表/字段边生成、次数和置信度合并；`chatbi.py` 负责只读元数据、外键和 `STATEMENTS_SUMMARY_HISTORY` 采集。采集到的 SQL 不进入执行器，非 SELECT/WITH 返回 422。当前常驻线程、内存字典和进程生命周期绑定，仅用于单进程 PoC；生产表为 `lineage_node/lineage_edge/sql_observation/collector_checkpoint`，唯一键需包含 tenant、datasource、source、target、kind 和 level，并由独立 Worker 保证任务租约和多实例互斥。
+
 OpenSearch 索引按 `aegis-assets-v{n}`、`aegis-events-v{n}`；mapping 固定、禁止 dynamic mapping 扩散。重建索引采用新索引 + alias 原子切换。
 
 ## 8. AIOps 后端实现
@@ -212,7 +225,7 @@ Model Gateway 提供统一 `chat/streamChat/embed/rerank/health` Port，适配 O
 
 ## 11. 消息、事务与一致性
 
-业务事务和 Outbox 写入同一数据库事务；Outbox Publisher 投递 Kafka，成功后标记 sent。消费者使用 inbox/event_id 幂等。跨资源操作使用 Saga/Temporal 补偿，不使用分布式两阶段提交。
+业务事务和 Outbox 写入同一 TiDB 事务；Outbox Publisher 投递 Kafka，成功后标记 sent。TiCDC 可捕获 TiDB 事实变更供下游分析，但不能替代领域 Outbox。消费者使用 inbox/event_id 幂等。跨资源操作使用 Saga/Temporal 补偿，不使用分布式两阶段提交。
 
 Topic：`metadata.changed.v1`、`query.completed.v1`、`observability.raw.v1`、`incident.changed.v1`、`execution.requested.v1`、`audit.created.v1`。分区键优先 `tenant_id` 或 `incident_id`，保证同一聚合有序。
 
@@ -233,7 +246,7 @@ Java、Python、Connector、Executor 统一 OpenTelemetry。指标包括 API 延
 ## 14. 测试与质量门禁
 
 - 单元：领域状态机、策略、SQL Guard、置信度、脱敏，覆盖率 ≥80%。
-- 集成：Testcontainers PostgreSQL/Kafka/Redis/OpenSearch/Temporal。
+- 集成：Testcontainers TiDB/Kafka/Redis/OpenSearch/Temporal。
 - 契约：OpenAPI、SSE、Kafka Schema、Connector SPI。
 - 安全：越权、SQL 注入、Prompt Injection、任意命令、租户串读。
 - AI：固定问数集、SQL 正确性、结果一致性、引用完整性、历史 Incident 回放。
@@ -253,3 +266,57 @@ Java、Python、Connector、Executor 统一 OpenTelemetry。指标包括 API 延
 ## 16. 后端验收
 
 所有接口具备 OpenAPI；所有状态机拒绝非法转换；写 SQL/越权查询 100% 拦截；异步流程可恢复、可取消、可审计；消息重复不造成重复执行；生产 Executor 不支持任意 Shell；至少一个本地模型、一个 OpenAI-compatible 模型和一个云模型通过能力探测、路由和故障降级测试。
+
+## 17. 知识库服务补充
+
+知识库 API 位于 /api/v1/knowledge-bases，覆盖创建/查询、文档文本/文件/允许目录入库与引用问答。backend/app/knowledge_base.py 实现内存领域模型、段落感知切分、中文/英文词法召回和确定性引用回答；backend/app/main.py 负责 HTTP、HTML 清洗和文件安全。生产迁移到持久化异步 IndexJob，使用 checksum 加 parser/splitter/embedding version 幂等，召回前强制 ACL。
+
+## 18. 产品能力目录服务
+
+产品目录是产品、前端、后端和测试的共享契约，当前实现位于 `backend/app/product_catalog.py`。
+
+| 方法 | 路径 | 参数 | 返回 | 规则 |
+|---|---|---|---|---|
+| GET | `/api/v1/product/modules` | `role/state/search` | 模块及过滤后的功能 | 只返回已授权范围；state 仅允许 available/demo/planned |
+| GET | `/api/v1/product/features/{id}` | 功能 ID | 单个功能完整契约 | 不存在返回 404 |
+
+`ProductFeature` 必须包含 `id/name/summary/roles/delivery_state/target_page/action_label/inputs/outputs/guardrails/scenario_ids/api_refs`。新增功能若缺少输入、输出或门禁，不能合并。
+
+## 19. 后端领域分层与 API 契约
+
+```text
+HTTP Router
+  → AuthContext / TenantScope
+  → Application Command/Query
+  → Domain Service / Policy
+  → Port (Repository / Connector / Model / Executor)
+  → Outbox Event / Audit
+```
+
+模块化单体阶段按包隔离：`product_catalog`、`query`、`knowledge`、`governance`、`aiops`、`sql_optimizer`、`scenario`、`approval`、`platform`。每个包禁止直接引用其他包的内存字典；跨边界通过接口或事件。迁移 TiDB 后领域模型保持 API 字段不变。
+
+统一错误：`{error_code,message,trace_id,retryable,details}`。鉴权失败 401/403，资源不存在 404，状态冲突 409，参数 422，外部依赖 502/504，配额 429。所有写操作返回审计 ID；异步操作返回 operation/run ID。
+
+跨域策略属于部署安全配置：本地开发可通过 `CORS_ALLOW_LOCALHOST=true` 接受 localhost/127.0.0.1 动态端口；生产必须关闭该开关并使用 `CORS_ALLOW_ORIGINS` 精确列出 HTTPS 来源。服务不得根据请求 Origin 自动回显未知来源，也不得以 `*` 配合 Cookie/Authorization 凭证。
+
+## 20. 生产 API 分组
+
+| 分组 | 主要资源 | 关键写入门禁 |
+|---|---|---|
+| product | modules、features | 目录发布需版本和校验 |
+| query | conversations、operations、datasets | 只读 SQL、AST、扫描上限 |
+| knowledge | bases、documents、chunks、queries、feedback | ACL、文件扫描、引用校验 |
+| governance | assets、schemas、lineage、quality、sql-assets | 资产权限、来源可信度 |
+| aiops | incidents、evidence、rca、health | 只读观测、时间窗、脱敏 |
+| sql-optimizer | versions、inputs、analysis、advice | 版本握手、EXPLAIN 只读 |
+| scenarios | templates、runs、steps、approvals | 服务端状态机、审批、幂等 |
+| platform | datasources、providers、connectors、policies、audit | 密钥引用、最小权限、双人复核 |
+
+## 21. 实现顺序与迁移
+
+1. 当前：产品目录 API、内存领域模型、确定性演示数据和契约测试。
+2. Sprint 1：目录/场景/知识库/资产迁移 TiDB，新增 tenant/workspace/ACL 字段和时间分区。
+3. Sprint 2：Outbox + Worker + MinIO/OpenSearch，所有异步操作可恢复。
+4. Sprint 3：Model Gateway、TiDB MCP、观测和调度 Connector SPI。
+5. Sprint 4：OPA + Executor Gateway + Temporal，开放低风险 Runbook。
+6. Sprint 5：评测、压测、离线包、备份恢复和生产灰度。

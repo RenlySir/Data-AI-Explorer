@@ -1,0 +1,42 @@
+backend:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/renlysir/data-ai-explorer-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 8080
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: 1, memory: 1Gi }
+  env:
+    AEGIS_NODE_ROLE: control
+    AEGIS_EXTERNAL_ADAPTER_MODE: demo
+    CORS_ALLOW_LOCALHOST: "false"
+    CORS_ALLOW_ORIGINS: https://data-ai.example.com
+  existingSecret: aegis-ai-secrets
+
+frontend:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/renlysir/data-ai-explorer-web
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 80
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+
+ingress:
+  enabled: true
+  className: nginx
+  host: data-ai.example.com
+  tls:
+    enabled: true
+    secretName: aegis-ai-tls
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault

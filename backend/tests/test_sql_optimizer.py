@@ -18,7 +18,7 @@ class SqlOptimizerApiTest(unittest.TestCase):
     def test_version_profiles_and_patch_normalization(self) -> None:
         response = self.client.get("/api/v1/aiops/sql-optimizer/versions")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual([item["minor"] for item in response.json()], ["7.5", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"])
+        self.assertEqual([item["minor"] for item in response.json()], ["7.5", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5", "9.1"])
         self.assertEqual(normalize_version("v8.5.4"), ("8.5.4", "8.5"))
         self.assertTrue(version_matches("8.5", "TiDB Server version: 8.5.4 TiDB Edition"))
         self.assertFalse(version_matches("8.4", "TiDB Server version: 8.5.4 TiDB Edition"))

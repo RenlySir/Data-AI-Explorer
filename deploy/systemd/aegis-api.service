@@ -1,0 +1,22 @@
+[Unit]
+Description=Aegis AI Control Plane API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aegis
+Group=aegis
+WorkingDirectory=/opt/aegis-ai/backend
+EnvironmentFile=-/etc/aegis-ai/aegis.env
+ExecStart=/opt/aegis-ai/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${AEGIS_API_PORT}
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/aegis-ai/data /var/log/aegis-ai
+
+[Install]
+WantedBy=multi-user.target

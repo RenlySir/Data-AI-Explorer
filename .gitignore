@@ -19,3 +19,5 @@ venv/
 # Test and coverage output
 .pytest_cache/
 coverage/
+playwright-report/
+test-results/

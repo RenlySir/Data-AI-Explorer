@@ -299,3 +299,90 @@ API 契约与接口集成
 3. 增加权限矩阵、SQL 对抗、Prompt Injection 和任意命令安全测试。
 4. 完成 100 并发、1,000 event/s、24 小时稳定性和恢复演练。
 5. 生成测试报告、缺陷关闭证明和上线评审结论。
+
+## 17. 2026-08-19 增量回归：功能中心与产品目录
+
+本节记录模块与功能详细设计落地后的增量结果；第 13～16 节保留的是早期 MVP 基线，涉及“无自动化测试、前端未调用 API”等结论不再代表当前代码状态。
+
+### 17.1 自动化与构建结果
+
+| 检查项 | 结果 | 证据 |
+|---|---|---|
+| FastAPI 全量测试 | 通过 | 36/36，覆盖数据关系网络、SQL JOIN 解析、服务端采集任务、摘要增量去重、模型接入、ChatBI、知识库、场景、SQL 优化和功能目录 |
+| Python 编译检查 | 通过 | `python -m compileall backend` |
+| React 生产构建 | 通过 | `npm run build`；主包约 319KB，ECharts 图表运行时约 600KB 按需加载；图表块超过默认 500KB 告警，首屏不加载 |
+| Compose 语法 | 通过 | `docker compose config --quiet` |
+| 补丁格式 | 通过 | `git diff --check` |
+
+### 17.2 浏览器联调结果
+
+联调地址为前端 `http://127.0.0.1:5174`、后端 `http://127.0.0.1:18082`，使用独立端口验证配置可迁移性。
+
+| 用例 | 结果 | 验收结论 |
+|---|---|---|
+| 登录后进入工作台 | 通过 | 后端摘要可读取，页面不再退回错误态 |
+| 功能目录完整性 | 通过 | 显示 8 个模块、62 项功能，状态统计为 21/31/10；数据关系与数据源管理为可使用，数据源功能仅登记在平台管理模块 |
+| 独立数据源管理页 | 通过 | 可筛选数据库/文件、打开 TiDB/MySQL 表单、上传 CSV、进入问数并二次确认删除 |
+| 数据关系网络 | 通过 | 表级/字段级力导向图实际渲染；元数据 Comment 可展开；SQL 提交后关系与摘要计数更新 |
+| SQL 持续采集 | 通过 | TiDB 演示摘要首次计入 18/6 次，相同摘要再次拉取不重复累计；非 SELECT 返回 422 |
+| DBA 角色筛选 | 通过 | 只保留角色包含 DBA 的功能 |
+| 待生产接入筛选 | 通过 | 详情操作按钮禁用，不伪造生产能力 |
+| “引用”关键词检索 | 通过 | 唯一命中 `knowledge-qa` |
+| 功能详情跳转 | 通过 | “检索并回答”进入知识库页面 |
+| 移动端 390×844 | 通过 | 页面宽度 390，`scrollWidth=390`，无横向溢出 |
+| 浏览器控制台 | 通过 | 无 error/warning，仅 Vite 与 React 开发信息 |
+
+### 17.3 本轮发现与修复
+
+浏览器以 `127.0.0.1` 或非 5173 端口访问时，旧 CORS 固定白名单会导致 API 请求失败。本轮已增加 `CORS_ALLOW_ORIGINS` 精确来源配置和 `CORS_ALLOW_LOCALHOST` 本机动态端口开关，并补充预检回归测试。生产环境必须设置 `CORS_ALLOW_LOCALHOST=false` 且仅填写受信任 HTTPS 来源。
+
+### 17.4 当前上线结论
+
+功能中心与产品目录通过本地演示验收；平台整体仍不通过生产上线。剩余关键门槛为 OIDC/RBAC、持久化与租户隔离、真实企业 Adapter、生产模型/向量库、审计留存、备份恢复和容量压测。
+
+## 18. 2026-08-19 页面体验与操作顺序回归
+
+| 用例 | 结果 | 验收证据 |
+|---|---|---|
+| 登录页视觉与回车提交 | 通过 | 企业能力、环境边界、账号密码顺序明确；密码框 Enter 登录 |
+| 导航分组与历史 | 通过 | 总览/数据智能/运维协同分组；Hash 路由及浏览器后退恢复工作台 |
+| 全局搜索 | 通过 | 进入功能中心并自动聚焦“搜索功能” |
+| 功能中心顺序 | 通过 | 模块 → 功能 → 详情 → 主操作；筛选可一键清除 |
+
+## 19. 2026-08-20 七阶段工程化增量回归
+
+本节为当前代码基线的最新结果；第 13～16 节中的早期缺陷描述保留作历史记录，不能替代本节结论。
+
+| 检查项 | 结果 | 证据 |
+|---|---|---|
+| 后端自动化测试 | 通过 | `PYTHONPATH=backend pytest -q backend/tests`，52 passed；Python `compileall` 通过 |
+| 前端质量门禁 | 通过 | `npm run lint`、`npm run typecheck`、`npm run format:check`、`npm run build` 全部通过 |
+| API 可观测性 | 通过 | 所有响应带 `X-Request-ID` 和基础安全头；`/metrics` 返回 Prometheus 文本指标 |
+| ChatBI 异步体验 | 通过 | 远端真实请求返回只读 SQL、证据和 ECharts 规格；SSE 阶段为 `PLANNING`、`VALIDATING`、`EXECUTING`、`COMPLETED` |
+| 三节点部署 | 通过 | `10.2.106.5/.124/.182` API 均健康；TiDB 节点全部 ready，版本 `8.0.11-TiDB-v9.1.0` |
+| 前端部署 | 通过 | 控制节点 `aegis-web.service` active，`http://10.2.106.5:18081` 返回最新构建产物 |
+| CI 配置 | 已提交 | `.github/workflows/ci.yml` 覆盖前端门禁、后端编译和测试 |
+| Docker 镜像构建 | 未执行 | 当前工作环境 Docker daemon 无可用输出，Dockerfile 已提供，需在构建机复验 |
+| Helm 模板渲染 | 未执行 | 当前环境未安装 Helm CLI，chart 已提供，需在 Kubernetes 工具链中执行 `helm template`/安装回滚 |
+| Playwright/Testcontainers/压测 | 待执行 | 需要浏览器、容器运行时和目标基础设施，列入生产退出门禁 |
+
+## 20. 2026-08-20 TiDB 全面替换增量回归
+
+| 检查项 | 结果 | 证据 |
+|---|---|---|
+| 默认本地数据库 | 通过 | Compose 已移除 PostgreSQL 服务，默认启动 `pingcap/tidb:v8.5.2` mocktikv 单节点 |
+| 平台元数据 | 通过 | `aegis_platform.platform_settings`、`audit_events` 在三节点 TiDB 中存在，设置与审计计数可读取 |
+| TiDB 版本 | 通过 | 三台 TiDB 均为 `8.0.11-TiDB-v9.1.0` |
+| TiDB session 策略 | 通过 | 真实连接返回 `tidb_isolation_read_engines=tikv,tiflash`；资源组 `rg_aegis_chatbi`、`rg_aegis_background` 已创建 |
+| 只读安全边界 | 修正 | TiDB 当前版本对 `SET TRANSACTION READ ONLY` 为受控 no-op，代码不再发送不兼容语句，改由只读账号、AST、超时、行数和资源组保证 |
+| 真实 TiDB 数据源 | 通过 | `/chatbi/datasources` 连接 `aegis_demo`，读取 18 张表及字段 Comment；数据关系采集成功 |
+| 真实 TiDB ChatBI | 通过 | 生成 `aegis_demo.orders` 查询，返回 30 行聚合结果、`tidb-direct` 引擎证据和 ECharts 规格 |
+| TiDB DDL/运维脚本 | 已提供 | `scripts/tidb-production-setup.sql`、`scripts/verify-tidb-platform.py`；TiFlash/BR/TiCDC 生产动作需目标集群单独演练 |
+| 最近问数复用 | 通过 | 点击历史问题进入问数页并自动带入问题 |
+| 事件操作闭环 | 通过 | 状态筛选、详情、领取反馈、启动作战室均可点击 |
+| 资产操作闭环 | 通过 | 详情、结构关系入口、治理任务反馈均可点击 |
+| 设置操作 | 通过 | 四类设置可切换；测试连接和保存均有反馈 |
+| 10 页面手机宽度 | 通过 | 390px 下每页 `scrollWidth=390`，无横向溢出 |
+| 桌面页面布局 | 通过 | 1440×900 下 10 页面无正文越界；事件详情双栏可用 |
+
+本轮仍保持生产边界：设置保存、事件领取和治理任务为当前会话演示反馈，未伪装为数据库持久化或真实外部执行。

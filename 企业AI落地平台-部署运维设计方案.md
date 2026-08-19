@@ -25,7 +25,7 @@
 ```text
 用户区
   → DMZ：WAF / Ingress / SSO 回调
-  → 控制区：Web、BFF、PostgreSQL、Redis、Temporal、Kafka
+  → 控制区：Web、BFF、TiDB、Redis、Temporal、Kafka
   → 数据区：Connector、OpenSearch、对象存储、数据库只读代理
   → 执行区：Executor Gateway、Executor Agent、目标 K8s/主机
   → 模型区：vLLM/Ollama/TGI/自建模型服务
@@ -37,7 +37,7 @@
 
 ### 4.1 服务
 
-`web`、`server`、`ai-worker`、`connector-worker`、`postgres`、`redis`、`opensearch`、`minio`、`kafka`、`temporal`。`local-model` Profile 可启动 Ollama；未启用时通过 `.env` 指向自建或云模型。
+`web`、`server`、`ai-worker`、`connector-worker`、`tidb`、`redis`、`opensearch`、`minio`、`kafka`、`temporal`。`local-model` Profile 可启动 Ollama；未启用时通过 `.env` 指向自建或云模型。
 
 ### 4.2 安装流程
 
@@ -55,7 +55,36 @@ cp .env.example .env
 
 ### 4.3 本地备份
 
-`aegis backup` 备份 PostgreSQL、配置清单、MinIO 元数据和模型 Provider 配置引用，不导出明文 Secret。默认写入指定目录，生成 manifest、校验和恢复说明；本地模型权重单独备份。
+`aegis backup` 使用 BR 备份 TiDB、配置清单、MinIO 元数据和模型 Provider 配置引用，不导出明文 Secret。默认写入指定对象存储目录，生成 manifest、校验和恢复说明；本地模型权重单独备份。
+
+## 4.4 三节点 TiDB 演示部署（已提供脚本）
+
+当目标环境没有 Docker/Kubernetes，但已有三台 CentOS 主机和 TiDB 集群时，使用仓库内的 systemd 方案：
+
+| 节点 | 角色 | 服务 | 端口 |
+|---|---|---|---|
+| `10.2.106.5` | Control | Aegis API、静态 Web、演示入口 | `18082`、`18081` |
+| `10.2.106.124` | Worker-AI | Aegis API 副本、知识库/问数/模型适配 Worker | `18082` |
+| `10.2.106.182` | Worker-Ops | Aegis API 副本、AIOps/SQL 优化/关系治理 Worker | `18082` |
+
+三台服务器共用现有 TiDB v9.1 集群 SQL 端口 `4100`；部署脚本不停止、不覆盖 `/opt/tidb-v91` 和已有 TiDB 数据目录。远端仅新增 `/opt/aegis-ai`、`/etc/aegis-ai`、`/var/log/aegis-ai`，并使用系统 Python 3.9 venv。平台设置与审计元数据使用同一集群的独立数据库 `aegis_platform`（表 `platform_settings`、`audit_events`），API 启动时幂等建表，也可执行 `scripts/migrate_platform_tidb.py`。MCP SDK 在 Python 3.9 上按可选依赖处理，live SQL 优化通过 allowlist 后的 TiDB 直连执行真实 `EXPLAIN FORMAT='verbose'`。
+
+执行前确认 SSH 公钥已配置，然后在仓库根目录运行：
+
+```bash
+./scripts/deploy-three-node.sh
+./scripts/verify-three-node.sh
+```
+
+首次演示数据只写入 TiDB 的 `aegis_demo` 库，可重复执行：
+
+```bash
+python3 -m venv .venv-demo
+.venv-demo/bin/pip install pymysql
+TIDB_HOST=10.2.106.5 TIDB_PORT=4100 .venv-demo/bin/python scripts/seed_tidb_demo.py
+```
+
+验证地址：`http://10.2.106.5:18081`；API 文档：`http://10.2.106.5:18082/docs`。每个节点的 `/health` 和 `/api/v1/deployment/status` 会返回节点角色、版本、三台 TiDB 状态和已装配的八个模块。脚本会在本地构建 Vite 前端并复制到控制节点，应用主机不需要 Node.js。生产环境应改用 SSH key、内部 PyPI/制品库、TLS、精确 CORS 和 Vault/OpenBao 凭证，不直接使用 root 密码。
 
 ## 5. Kubernetes 生产部署
 
@@ -74,11 +103,11 @@ helm upgrade --install aegis deploy/helm/aegis \
   -n aegis-control --create-namespace -f values-prod.yaml --atomic --timeout 15m
 ```
 
-生产 values 必须通过 Git 管理，Secret 使用 External Secrets/Vault Agent 注入。禁止把密钥写进 Helm values、镜像或 Git。
+生产 values 必须通过 Git 管理，TiDB 使用 TiDB Operator/TiUP 管理，Secret 使用 External Secrets/Vault Agent 注入。禁止把密钥写进 Helm values、镜像或 Git。
 
 ### 5.3 资源与高可用基线
 
-Web/Server/AI Worker/Connector 至少 2 副本，配置 requests/limits、HPA、PDB、反亲和和 topology spread。PostgreSQL 使用托管 HA 或 Patroni；Kafka、OpenSearch 至少 3 节点；Temporal 使用 HA 数据库；MinIO/对象存储开启版本化和跨节点冗余。
+Web/Server/AI Worker/Connector 至少 2 副本，配置 requests/limits、HPA、PDB、反亲和和 topology spread。TiDB 使用 TiDB Operator 或 TiUP 管理 HA，按需部署 TiFlash、TiCDC 和 Prometheus/Grafana；Kafka、OpenSearch 至少 3 节点；Temporal 使用 TiDB/MySQL 兼容 HA 数据库；MinIO/对象存储开启版本化和跨节点冗余。
 
 GPU 模型节点使用污点 `workload=aegis-model`、专用 RuntimeClass、显存指标和独立 HPA。模型权重挂载只读 PVC；升级采用新 Deployment 灰度，不原地覆盖权重。
 
@@ -136,25 +165,27 @@ P0：控制面不可用、数据泄露、Executor 未授权执行；立即电话
 
 复盘问数正确率、SQL 拦截、RCA 采纳率、Runbook 成功/回滚、模型成本与延迟；清理过期 Query Result；检查未发布指标、失败血缘和长期运行任务；抽查审计完整性。
 
+数据关系采集 Worker 使用独立只读数据库账号：允许读取业务 `INFORMATION_SCHEMA.TABLES/COLUMNS/KEY_COLUMN_USAGE`，TiDB SQL 关系采集再按版本授予 `STATEMENTS_SUMMARY_HISTORY` 所需的最小监控权限。禁止授予 DDL/DML 权限。PoC 使用 API 进程内常驻任务，页面关闭后仍运行，但服务重启会丢失调度状态；生产由持有任务租约的调度器按 `collector_checkpoint` 执行，建议默认 5 分钟，失败指数退避，按 Digest 幂等。SQL Literal 入库前脱敏，观察记录设置租户级保留期。
+
 ### 9.3 月度维护
 
 执行漏洞扫描、依赖更新评估、权限回收、备份恢复抽测、容量预测、模型离线评测和 Runbook 过期复审。高风险动作和模型路由变更必须走变更单。
 
 ## 10. 备份、恢复与容灾
 
-备份对象：PostgreSQL 全量/WAL、MinIO 对象、Kafka 关键 Topic、Temporal 数据、OpenSearch 可重建索引、Helm values、模型 Provider 配置、审计归档。
+备份对象：TiDB BR 全量/增量、MinIO 对象、Kafka 关键 Topic、Temporal 数据、OpenSearch 可重建索引、Helm values、模型 Provider 配置、审计归档。
 
 建议策略：每日全量、15 分钟 WAL；对象存储版本化；审计 WORM；OpenSearch 以主数据重建为主。每季度进行跨节点恢复和完整业务演练，验证登录、问数、Incident、审批、审计和回滚。
 
-恢复顺序：基础设施 → Vault/CA → PostgreSQL → Kafka/Temporal → Redis → OpenSearch/MinIO → Server/Worker → Model Gateway → Executor Gateway。恢复后暂停自动执行，人工确认数据一致性和审批状态后再开放。
+恢复顺序：基础设施 → Vault/CA → TiDB BR → Kafka/Temporal → Redis → OpenSearch/MinIO → Server/Worker → Model Gateway → Executor Gateway。恢复后暂停自动执行，人工确认数据一致性和审批状态后再开放。
 
 ## 11. 发布与升级
 
-场景中心生产部署需要额外配置外部系统 Adapter、短期凭证和 Runbook 白名单。建议先启用只读模式和报告模式，再按场景逐项开放低风险动作；所有高风险动作必须验证审批人权限、双人审批（如适用）、幂等键、超时撤销、执行证据和回滚。场景运行状态迁移到 PostgreSQL/Temporal 后，升级演练需验证服务重启恢复、重复消息去重和审批等待不丢失。
+场景中心生产部署需要额外配置外部系统 Adapter、短期凭证和 Runbook 白名单。建议先启用只读模式和报告模式，再按场景逐项开放低风险动作；所有高风险动作必须验证审批人权限、双人审批（如适用）、幂等键、超时撤销、执行证据和回滚。场景运行状态迁移到 TiDB/Temporal 后，升级演练需验证服务重启恢复、重复消息去重和审批等待不丢失。
 
 发布流水线：代码检查 → 单测/契约/安全 → 镜像构建与 SBOM → AI 评测 → 测试环境 → 预生产 → Canary/Blue-Green → 生产。
 
-数据库采用 expand/contract：先新增兼容字段/表，再发布应用，确认无旧版本读写后删除旧结构。Helm 使用 `--atomic`；升级前自动备份和 health check；失败自动回滚应用，但数据库迁移回滚需使用兼容迁移脚本。
+数据库采用 expand/contract：先新增兼容字段/表，再发布应用，确认无旧版本读写后删除旧结构。TiDB DDL 通过版本化迁移执行，不在应用启动时做不可逆变更。Helm 使用 `--atomic`；升级前执行 BR 备份和 health check；失败自动回滚应用，但数据库迁移回滚需使用兼容迁移脚本。
 
 模型升级：新模型先注册 `DRAFT`，通过能力探测和离线评测，影子流量对比质量/延迟/成本，最后切换路由；保留旧模型和 Prompt 版本，可一键回退。
 
@@ -184,7 +215,7 @@ P0：控制面不可用、数据泄露、Executor 未授权执行；立即电话
 
 ## 14. 容量与扩容
 
-当 API P95 连续 15 分钟超过 500ms，扩容 Web/Server；Kafka lag 超阈值扩容消费者；模型 GPU 显存超过 85% 或首 token 超 SLO 扩容 GPU/切换模型；OpenSearch 磁盘 70% 触发扩容或生命周期清理；PostgreSQL 连接池超过 70% 评估读副本/拆分查询。
+当 API P95 连续 15 分钟超过 500ms，扩容 Web/Server；Kafka lag 超阈值扩容消费者；模型 GPU 显存超过 85% 或首 token 超 SLO 扩容 GPU/切换模型；OpenSearch 磁盘 70% 触发扩容或生命周期清理；TiDB RU/连接池/Region 热点超过阈值时评估资源组、读引擎和节点扩容。
 
 租户限额：并发问数、Token、扫描量、结果存储、事件速率和 Agent 预算。超额返回可解释的配额错误，不允许通过重试绕过。
 
@@ -201,3 +232,82 @@ P0：控制面不可用、数据泄露、Executor 未授权执行；立即电话
 - 模型 Provider、GPU、Connector、Executor 具备健康检查和降级路径。
 - 任何高风险动作均能追溯发起人、审批、参数、执行、验证和回滚。
 - 离线包可验签，公网 egress 关闭后核心功能仍可用。
+
+## 17. 知识库部署补充
+
+本地知识库随 FastAPI 运行；允许目录由只读卷和 DATASET_ALLOWED_ROOTS 控制。生产新增 knowledge-worker、对象存储、全文索引、向量库和本地 Embedding/Reranker。监控入库队列、解析/Embedding 失败、Chunk 分布、召回延迟、无结果率、Citation Coverage 和索引版本；恢复时先还原元数据与原文，再恢复或重建索引并做 checksum 对账。
+
+## 18. 模块化部署单元
+
+| 部署单元 | 本地 Compose | 内网 Kubernetes | 资源/扩容依据 |
+|---|---|---|---|
+| Web/BFF | `web` | web + gateway | 页面请求、API P95 |
+| API 控制面 | FastAPI MVP | api 多副本 | API P95、连接池 |
+| Query/SQL Worker | API 内置 | query-worker、sql-worker | 问数并发、EXPLAIN 延迟 |
+| Knowledge Worker | 可选关闭 | parser/index/embed/rerank | 文档队列、Chunk 吞吐、GPU |
+| Scenario/Temporal | 演示内存 | temporal server/worker | 运行实例、步骤耗时 |
+| Connector/Executor | 不连接生产 | adapter、executor-gateway | 外部调用速率、动作队列 |
+| 数据底座 | TiDB、Redis、MinIO | HA TiDB、Redis、S3/OpenSearch/Vector | 数据量、索引、保留期 |
+
+本地环境默认只开放 Web、API、TiDB、Redis、MinIO；生产 Adapter、模型 Provider 和 Executor 必须通过环境变量显式启用，默认关闭。
+
+## 19. 配置与密钥边界
+
+配置分为 `platform`、`datasource`、`model`、`connector`、`policy`、`observability` 六类。配置文件只存引用和非敏感参数；密钥、数据库密码、模型 Token 和机器凭证存 Vault/OpenBao，通过短期租约注入。前端只显示 Provider 名称、能力和健康，不回显密钥。
+
+关键环境变量：`TIDB_HOST`、`TIDB_PORT`、`TIDB_DATABASE`、`AEGIS_PLATFORM_DB_DATABASE`、`REDIS_URL`、`S3_ENDPOINT`、`DATASET_ALLOWED_ROOTS`、`MODEL_GATEWAY_URL`、`MODEL_LOCAL_ONLY`、`EXECUTOR_ENABLED`、`CORS_ALLOW_LOCALHOST`、`CORS_ALLOW_ORIGINS`、`OTEL_EXPORTER_OTLP_ENDPOINT`。生产启动前执行配置 Schema 校验，缺少安全边界直接阻断。
+
+本地版本默认 `CORS_ALLOW_LOCALHOST=true`，支持 localhost/127.0.0.1 动态开发端口。预生产和生产必须设置为 `false`，并在 `CORS_ALLOW_ORIGINS` 中列出网关实际 HTTPS Origin；不得使用 `*` 与凭证模式组合。变更 Origin 后需要执行 OPTIONS 预检和登录、问数、功能目录三条浏览器回归。
+
+## 20. 发布、回滚和数据保护
+
+发布顺序：数据库向前兼容迁移 → API → Worker → Web → Connector/Executor。产品目录和策略先在测试租户发布，完成契约测试后灰度。回滚只回滚镜像和配置，不回滚已写入的审计；数据库迁移使用 expand/contract，索引使用版本别名。
+
+备份：TiDB 使用 BR 每日全备 + 增量，MinIO 版本与跨节点副本，OpenSearch/Vector DB 保存快照；每月演练恢复并校验资产、知识文档、审批和审计数量。目标基线：控制面 RPO ≤15 分钟、RTO ≤60 分钟；索引可重建但原文不可丢失。
+
+## 21. 按模块的运行手册
+
+| 模块 | 关键健康指标 | 降级策略 | 禁止动作 |
+|---|---|---|---|
+| 智能问数 | SQL P95、拦截率、模型延迟、空结果率 | 只读指标目录/历史结果 | 模型故障时切公网 |
+| 知识库 | 入库队列、索引失败、Recall、Citation Coverage | 词法检索/人工查询 | 无 ACL 召回 |
+| 数据治理 | 元数据采集延迟、血缘失败、质量规则延迟 | 保留最近快照 | 直接覆盖资产事实 |
+| AIOps | 告警延迟、RCA 证据覆盖、事件堆积 | 规则 RCA、人工接管 | 状态不明自动重试 |
+| SQL 优化 | 版本画像加载、分析耗时、真实计划错误 | 仅模拟并明确标记 | 冒充真实 EXPLAIN |
+| 场景/执行 | Workflow 失败、审批超时、动作状态不明 | 冻结动作、人工处理 | 任意 Shell、永久凭证 |
+| 平台管理 | Provider/Connector 健康、审计延迟、策略版本 | 只读模式、禁止高风险 | 绕过审批或审计 |
+
+## 22. 运维验收新增项
+
+- 功能目录接口在 200ms 内返回，过滤结果与页面功能数量一致。
+- 每个生产启用功能都有 Owner、SLO、健康检查、降级和回滚 Runbook。
+- 每个场景运行至少验证一次重复消息、Worker 重启、审批超时、执行状态不明。
+- 离线部署关闭公网 egress 后，功能目录、知识库本地检索、SQL 模拟和场景演示仍可运行。
+## 4.1 三节点 TiDB 演示部署（已提供脚本）
+
+当目标环境没有 Docker/ Kubernetes，但已有三台 CentOS 主机和 TiDB 集群时，使用仓库内的 systemd 方案：
+
+| 节点 | 角色 | 服务 | 端口 |
+|---|---|---|---|
+| `10.2.106.5` | Control | Aegis API、静态 Web、演示入口 | `18082`、`18081` |
+| `10.2.106.124` | Worker-AI | Aegis API 副本、知识库/问数/模型适配 Worker | `18082` |
+| `10.2.106.182` | Worker-Ops | Aegis API 副本、AIOps/SQL 优化/关系治理 Worker | `18082` |
+
+三台服务器共用现有 TiDB v9.1 集群 SQL 端口 `4100`；部署脚本不停止、不覆盖 `/opt/tidb-v91` 和已有 TiDB 数据目录。远端仅新增 `/opt/aegis-ai`、`/etc/aegis-ai`、`/var/log/aegis-ai`，并使用系统 Python 3.9 venv。
+
+执行前确认 SSH 公钥已配置，然后在仓库根目录运行：
+
+```bash
+./scripts/deploy-three-node.sh
+./scripts/verify-three-node.sh
+```
+
+首次演示数据只写入 TiDB 的 `aegis_demo` 库，可重复执行：
+
+```bash
+python3 -m venv .venv-demo
+.venv-demo/bin/pip install pymysql
+TIDB_HOST=10.2.106.5 TIDB_PORT=4100 .venv-demo/bin/python scripts/seed_tidb_demo.py
+```
+
+验证地址：`http://10.2.106.5:18081`；API 文档：`http://10.2.106.5:18082/docs`。每个节点的 `/health` 和 `/api/v1/deployment/status` 会返回节点角色、版本、三台 TiDB 状态和已装配的八个模块。生产环境应改用 SSH key、内部 PyPI/制品库、TLS、精确 CORS 和 Vault/OpenBao 凭证，不直接使用 root 密码。

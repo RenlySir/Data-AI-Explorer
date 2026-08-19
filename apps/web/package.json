@@ -6,6 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "eslint .",
+    "format:check": "prettier --check \"eslint.config.js\" \"vite.config.ts\" \"playwright.config.ts\" \"e2e/**/*.ts\" \"src/main.tsx\" \"src/login.css\" \"src/operation.css\" \"src/shell.css\"",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -18,7 +23,12 @@
     "vite": "latest"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.62.1",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4"
+    "@types/react-dom": "^19.2.4",
+    "eslint": "^9.39.5",
+    "prettier": "^3.9.6",
+    "typescript-eslint": "^8.67.0"
   }
 }

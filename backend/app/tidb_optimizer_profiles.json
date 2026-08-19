@@ -102,5 +102,19 @@
     "checks": ["instance_plan_cache", "global_index_ga", "stats_cache", "schema_cache", "index_build_throttle"],
     "release_notes": "https://github.com/pingcap/docs/blob/master/releases/release-8.5.0.md",
     "source": "https://github.com/pingcap/tidb/tree/v8.5.0/pkg/planner"
+  },
+  {
+    "minor": "9.1",
+    "label": "TiDB 9.1 runtime baseline",
+    "code_tag": "v9.1.0",
+    "code_commit": "runtime-cluster-v9.1.0",
+    "features": [
+      "基于实际连接集群执行 TiDB EXPLAIN FORMAT=verbose",
+      "延续统计信息、Plan Cache、Index Merge 与分区裁剪优化能力",
+      "建议结合目标集群运行时配置和统计信息复核模拟结论"
+    ],
+    "checks": ["runtime_explain", "stats_cache", "plan_cache", "index_merge", "partition_pruning"],
+    "release_notes": "https://github.com/pingcap/docs/releases/tag/v9.1.0",
+    "source": "https://github.com/pingcap/tidb/tree/v9.1.0/pkg/planner"
   }
 ]

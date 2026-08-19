@@ -22,6 +22,12 @@ class SmartQueryApiTest(unittest.TestCase):
         health = self.client.get("/health")
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json()["status"], "ok")
+        self.assertEqual(health.json()["database"], "tidb")
+        self.assertTrue(health.headers.get("X-Request-ID", "").startswith("req-"))
+        self.assertEqual(health.headers["X-Content-Type-Options"], "nosniff")
+        metrics = self.client.get("/metrics")
+        self.assertEqual(metrics.status_code, 200)
+        self.assertIn("aegis_http_requests_total", metrics.text)
 
         missing_endpoint = self.client.post("/api/v1/tidb/mcp/introspect", json={})
         self.assertEqual(missing_endpoint.status_code, 400)
@@ -53,6 +59,20 @@ class SmartQueryApiTest(unittest.TestCase):
         status = self.client.get(f"/api/v1/query/operations/{operation['operation_id']}")
         self.assertEqual(status.status_code, 200)
         self.assertEqual(status.json()["operation_id"], operation["operation_id"])
+
+    def test_operation_events_stream_execution_phases(self) -> None:
+        response = self.client.post(
+            "/api/v1/chatbi/query",
+            json={"datasource_id": "ds-demo-tidb", "question": "近 30 天 GMV 趋势"},
+        )
+        self.assertEqual(response.status_code, 202)
+        operation_id = response.json()["operation_id"]
+        events = self.client.get(f"/api/v1/query/operations/{operation_id}/events")
+        self.assertEqual(events.status_code, 200)
+        self.assertIn("event: progress", events.text)
+        self.assertIn('"phase": "PLANNING"', events.text)
+        self.assertIn('"phase": "COMPLETED"', events.text)
+        self.assertEqual(events.headers["content-type"].split(";", 1)[0], "text/event-stream")
 
     def test_dangerous_intent_and_unknown_operation_are_rejected(self) -> None:
         for question in ("drop table sales.orders", "UPDATE orders SET amount=0", "删除订单"):

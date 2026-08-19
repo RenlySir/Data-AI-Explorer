@@ -113,3 +113,39 @@ PoC 选择标准：接口开放性 25%、安全与权限 20%、功能适配 20%�
 - 通用 BI 报表设计器、完整 ITSM、通用 CMDB、通用远程执行平台、自研大模型训练平台。
 
 这些取舍能让首期产品保持简洁，同时通过成熟开源底座获得可落地能力。
+
+## 8. 2026-08 知识库与任务体验专项学习
+
+本轮进一步阅读了 RAGFlow、Dify、FastGPT、MaxKB、AnythingLLM 和 LangChain 的官方文档/仓库，重点观察首次使用路径、检索可解释性、文档处理和企业部署边界。
+
+| 项目 | 官方体验重点 | Aegis 的落地决定 |
+|---|---|---|
+| [RAGFlow](https://github.com/infiniflow/ragflow) | 深度解析、模板分块、Chunk 可视化、人工核验、混合召回、引用 | 增加文档 Chunk 检查、引用优先和可评测检索；复杂解析接入生产 Worker |
+| [Dify](https://github.com/langgenius/dify) | 知识库创建向导、分块预览、索引/检索分步配置、工作流编排 | 页面拆为问答/文档/检索测试/配置四个任务视图；配置与日常问答分离 |
+| [FastGPT](https://github.com/labring/FastGPT) | 单点检索测试、Chunk 编辑、引用反馈、调用日志和应用评测 | 增加最近查询、Chunk 预览、回答反馈；生产版增加评测集和回归门禁 |
+| [MaxKB](https://github.com/1Panel-dev/MaxKB) | 企业 Agent、RAG Pipeline、工作流、MCP、私有模型和快速集成 | 让知识库作为问数、AIOps、SQL 优化、场景中心的 Retriever Tool |
+| [AnythingLLM](https://github.com/Mintplex-Labs/anything-llm) | Workspace 隔离、上传即问、来源引用、本地优先、低配置 | 用知识库范围和权限边界替代无边界聊天；保留本地部署和上传即问体验 |
+| [LangChain Retrieval](https://docs.langchain.com/oss/python/langchain/retrieval) | Loader、Splitter、Embedding、Vector Store、Retriever 组件边界；2-Step/Agentic/Hybrid RAG 分流 | 保持适配器边界，MVP 用确定性词法检索，生产替换为 BM25+向量+重排 |
+
+### 8.1 已整合的产品改进
+
+1. 工作台以四个高频任务入口降低首次使用成本：经营数据分析、查询企业知识、诊断 SQL 性能、发起协同任务。
+2. 左侧导航按“数据分析 → 运维治理 → 协同执行”排序，用户先按目标找入口，再进入技术详情。
+3. 知识库改为问答、文档、检索测试、配置四个任务视图，并补充 Chunk 检查、查询历史和回答反馈。
+4. 全系统操作手册用“场景 → 功能 → 输入 → 点击步骤 → 结果 → 风险”描述具体用法，区分已实现、演示闭环和生产接入。
+
+### 8.2 明确不照搬的模式
+
+- 不把所有能力做成一个空白聊天框；企业用户需要对象、权限、证据和下一步动作。
+- 不把模型生成的回答或置信度当作事实；结果必须追溯到 SQL、资产、文档片段、监控证据或执行记录。
+- 不让 Agent 直接获得任意 Shell、数据库写权限或永久密钥；生产动作必须经过白名单、审批、短期凭证、验证和回滚。
+- 不因开源产品功能丰富就同时引入多个重量级底座；先用接口和 PoC 验证，再按连接器、召回质量、权限和运维成本选择。
+
+### 8.3 官方资料
+
+- RAGFlow 文档：https://ragflow.io/docs/dev/
+- Dify 知识库创建：https://docs.dify.ai/en/cloud/use-dify/knowledge/create-knowledge/readme
+- Dify 分块与清洗：https://docs.dify.ai/en/cloud/use-dify/knowledge/create-knowledge/chunking-and-cleaning-text
+- FastGPT 文档：https://doc.fastgpt.io/
+- MaxKB 文档：https://maxkb.cn/docs/
+- AnythingLLM 文档：https://docs.anythingllm.com/
