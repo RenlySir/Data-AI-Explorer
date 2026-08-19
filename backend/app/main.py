@@ -8,12 +8,27 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+from app.sql_optimizer import (
+    ALLOWED_SQL_SUFFIXES,
+    MAX_INPUT_BYTES,
+    SQLOptimizeRequest,
+    SQLOptimizeResponse,
+    SQLDirectoryRequest,
+    SQLInputBundle,
+    TIDB_PROFILES,
+    analyze_sql,
+    bundle_from_files,
+    normalize_version,
+    version_matches,
+)
 
 
 def now_iso() -> str:
@@ -288,6 +303,22 @@ def rows_from_result(value: Any) -> list[dict[str, Any]]:
     return []
 
 
+def tabular_rows(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict) and isinstance(value.get("columns"), list) and isinstance(value.get("rows"), list):
+        columns = [str(column.get("name") if isinstance(column, dict) else column) for column in value["columns"]]
+        return [dict(zip(columns, row)) for row in value["rows"] if isinstance(row, (list, tuple))]
+    return rows_from_result(value)
+
+
+def first_scalar(value: Any) -> str:
+    rows = rows_from_result(value)
+    if rows and rows[0]:
+        return str(next(iter(rows[0].values())))
+    if isinstance(value, str):
+        return value
+    return ""
+
+
 async def introspect_mcp(payload: TidbMcpIntrospectRequest) -> TidbCatalog:
     endpoint = payload.endpoint or os.getenv("TIDB_MCP_ENDPOINT", "").strip()
     if not endpoint:
@@ -348,6 +379,21 @@ def allowed_local_path(path: Path) -> bool:
     roots = [Path(item).expanduser().resolve() for item in os.getenv("DATASET_ALLOWED_ROOTS", str(Path.cwd())).split(os.pathsep) if item]
     resolved = path.expanduser().resolve()
     return any(resolved == root or root in resolved.parents for root in roots)
+
+
+def active_mcp_config(explicit_endpoint: str | None = None) -> tuple[str, str | None, dict[str, str]]:
+    endpoint = explicit_endpoint or (MCP_CONNECTION.endpoint if MCP_CONNECTION else None) or os.getenv("TIDB_MCP_ENDPOINT", "").strip()
+    if not endpoint or endpoint in ("demo://tidb", "demo"):
+        raise HTTPException(400, "live optimization requires a real TiDB MCP endpoint")
+    parsed = urlparse(endpoint)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
+        raise HTTPException(400, "TiDB MCP endpoint must be an HTTP(S) URL without credentials or fragments")
+    allowed_hosts = {item.strip().lower() for item in os.getenv("TIDB_MCP_ALLOWED_HOSTS", "").split(",") if item.strip()}
+    if allowed_hosts and parsed.hostname.lower() not in allowed_hosts:
+        raise HTTPException(403, "TiDB MCP endpoint host is not allowlisted")
+    token = MCP_CONNECTION.token if MCP_CONNECTION and MCP_CONNECTION.endpoint == endpoint else None
+    tool_map = MCP_CONNECTION.tool_map if MCP_CONNECTION and MCP_CONNECTION.endpoint == endpoint else {}
+    return endpoint, token, tool_map
 
 
 def register_dataset(path: Path, display_name: str | None = None) -> Dataset:
@@ -484,6 +530,83 @@ def analyze_dataset(payload: DatasetAnalyzeRequest) -> QueryOperation:
     operation = QueryOperation(operation_id=f"op-{uuid4().hex[:10]}", status="completed", question=payload.question, sql=sql, answer="已完成文件数据分析，结果可继续转为报表或任务。", columns=columns, rows=rows, chart=chart_spec(columns, rows, payload.question), evidence=[{"type": "dataset", "label": dataset.name, "ref": dataset.id}, {"type": "engine", "label": "DuckDB", "ref": "duckdb"}], created_at=now_iso())
     OPERATIONS[operation.operation_id] = operation
     return operation
+
+
+@app.get("/api/v1/aiops/sql-optimizer/versions", tags=["sql-optimizer"])
+def sql_optimizer_versions() -> list[dict[str, Any]]:
+    return [
+        {
+            "minor": profile["minor"],
+            "label": profile["label"],
+            "code_tag": profile["code_tag"],
+            "code_commit": profile["code_commit"],
+            "features": profile["features"],
+            "release_notes": profile["release_notes"],
+            "source": profile["source"],
+        }
+        for profile in TIDB_PROFILES
+    ]
+
+
+@app.post("/api/v1/aiops/sql-optimizer/inputs/upload", response_model=SQLInputBundle, tags=["sql-optimizer"])
+async def upload_sql_optimizer_inputs(files: list[UploadFile] = File(...)) -> SQLInputBundle:
+    if not files or len(files) > 20:
+        raise HTTPException(400, "upload between 1 and 20 SQL/DDL files")
+    loaded: list[tuple[str, bytes]] = []
+    for file in files:
+        name = Path(file.filename or "input.sql").name
+        payload = await file.read(MAX_INPUT_BYTES + 1)
+        if len(payload) > MAX_INPUT_BYTES:
+            raise HTTPException(413, f"SQL input exceeds {MAX_INPUT_BYTES} bytes: {name}")
+        loaded.append((name, payload))
+    return bundle_from_files(loaded)
+
+
+@app.post("/api/v1/aiops/sql-optimizer/inputs/local-directory", response_model=SQLInputBundle, tags=["sql-optimizer"])
+def scan_sql_optimizer_directory(payload: SQLDirectoryRequest) -> SQLInputBundle:
+    directory = Path(payload.path).expanduser()
+    if not directory.exists() or not directory.is_dir() or not allowed_local_path(directory):
+        raise HTTPException(403, "directory is not allowed")
+    files = [
+        item
+        for item in directory.rglob("*")
+        if item.is_file()
+        and not item.is_symlink()
+        and allowed_local_path(item)
+        and item.suffix.lower() in ALLOWED_SQL_SUFFIXES
+    ][:100]
+    loaded: list[tuple[str, bytes]] = []
+    for path in files:
+        if path.stat().st_size > MAX_INPUT_BYTES:
+            raise HTTPException(413, f"SQL input exceeds {MAX_INPUT_BYTES} bytes: {path.name}")
+        loaded.append((str(path.relative_to(directory)), path.read_bytes()))
+    return bundle_from_files(loaded)
+
+
+@app.post("/api/v1/aiops/sql-optimizer/analyze", response_model=SQLOptimizeResponse, tags=["sql-optimizer"])
+async def optimize_tidb_sql(payload: SQLOptimizeRequest) -> SQLOptimizeResponse:
+    normalize_version(payload.tidb_version)
+    if payload.plan_mode == "simulate":
+        return analyze_sql(payload)
+
+    analyze_sql(payload)
+    endpoint, token, tool_map = active_mcp_config(payload.mcp_endpoint)
+    try:
+        actual_version = first_scalar(await call_mcp(endpoint, token, tool_map, "query", {"sql": "SELECT VERSION() AS version"}))
+        if not actual_version:
+            raise HTTPException(502, "TiDB MCP did not return a database version")
+        if not version_matches(payload.tidb_version, actual_version):
+            raise HTTPException(409, f"selected TiDB version does not match connected cluster: {actual_version}")
+        sql = payload.sql.strip().rstrip(";")
+        raw_plan = await call_mcp(endpoint, token, tool_map, "query", {"sql": f"EXPLAIN FORMAT='verbose' {sql}"})
+        plan_rows = tabular_rows(raw_plan)
+        if not plan_rows:
+            raise HTTPException(502, "TiDB MCP returned an empty EXPLAIN plan")
+        return analyze_sql(payload, live_rows=plan_rows, actual_version=actual_version)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"TiDB live optimization failed: {exc.__class__.__name__}") from exc
 
 
 @app.get("/api/v1/incidents", response_model=list[Incident], tags=["aiops"])

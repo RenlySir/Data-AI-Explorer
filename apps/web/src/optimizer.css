@@ -1,0 +1,68 @@
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: #10182866;
+}
+
+.directory-dialog {
+  width: min(480px, 100%);
+  padding: 22px;
+  background: #fff;
+  border: 1px solid #dbe2ea;
+  border-radius: 8px;
+  box-shadow: 0 24px 64px #10182833;
+}
+
+.dialog-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+
+.dialog-title h3 {
+  margin-top: 6px;
+  font-size: 18px;
+}
+
+.icon-button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  color: #64748b;
+  background: #f5f7fa;
+  border-radius: 5px;
+  place-items: center;
+}
+
+.directory-dialog > label {
+  display: block;
+  margin-bottom: 7px;
+  color: #526277;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.directory-dialog > input {
+  width: 100%;
+  padding: 11px;
+  border: 1px solid #cfd8e4;
+  border-radius: 5px;
+  outline: 0;
+}
+
+.directory-dialog > input:focus {
+  border-color: #5794eb;
+  box-shadow: 0 0 0 3px #dbeafe;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}

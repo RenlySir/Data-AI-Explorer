@@ -18,6 +18,8 @@
 | 8 | [专项测试方案与执行报告](企业AI落地平台-专项测试方案与执行报告.md) | 功能、接口、安全、性能、部署、E2E 测试和当前缺陷 |
 | 9 | [智能问数模块开发说明](智能问数模块开发说明.md) | TiDB MCP、Text2SQL、ECharts、CSV/Parquet 和目录分析 |
 | 10 | [智能问数模块专项测试方案与执行报告](智能问数模块-专项测试方案与执行报告.md) | 功能、接口、安全、浏览器联调、集成测试边界和生产退出标准 |
+| 11 | [SQL 优化模块开发说明](SQL优化模块开发说明.md) | TiDB 版本画像、SQLAdvisor 方法、模拟/真实 EXPLAIN、接口与安全边界 |
+| 12 | [SQL 优化模块专项测试方案与执行报告](SQL优化模块-专项测试方案与执行报告.md) | 版本差异、规则、输入、真实计划门禁和生产验收标准 |
 
 ## 统一技术与交付约定
 
@@ -31,7 +33,7 @@
 
 ## 当前状态
 
-当前版本已包含可运行的 Vite 前端和 FastAPI 智能问数联调切片：支持 TiDB MCP demo/通用工具适配、Schema/表/字段 comment/关系展示、Text2SQL 只读 SQL、ECharts 结果、CSV/Parquet 上传、受控目录扫描和 DuckDB 文件分析。真实 TiDB、模型网关、认证权限和持久化仍需按专项测试报告完成生产集成验收。
+当前版本已包含可运行的 Vite 前端、FastAPI 智能问数和 AIOps SQL 优化联调切片：支持 TiDB MCP demo/通用工具适配、Schema/表/字段 comment/关系展示、Text2SQL 只读 SQL、ECharts 结果、CSV/Parquet 上传、受控目录扫描和 DuckDB 文件分析；SQL 优化支持 TiDB 7.5-8.5 版本画像、SQL/DDL 文本/文件/目录输入、版本模拟与 MCP 真实 EXPLAIN。真实 TiDB、模型网关、认证权限和持久化仍需按专项测试报告完成生产集成验收。
 
 ## 本地开发
 

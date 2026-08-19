@@ -32,4 +32,13 @@ OpenAPI is available at http://localhost:8080/docs. The API is prefixed with `/a
 - `POST /api/v1/datasets/local-directory`: scan an allowlisted machine directory. Configure `DATASET_ALLOWED_ROOTS`; arbitrary paths are rejected.
 - `POST /api/v1/datasets/analyze`: query registered files through DuckDB and return rows plus an ECharts option.
 
+## TiDB SQL Optimizer APIs
+
+- `GET /api/v1/aiops/sql-optimizer/versions`: list the version profiles for TiDB 7.5 and 8.0-8.5, including source tag, commit and relevant optimizer capabilities.
+- `POST /api/v1/aiops/sql-optimizer/inputs/upload`: load one or more UTF-8 `.sql`, `.ddl` or `.txt` files.
+- `POST /api/v1/aiops/sql-optimizer/inputs/local-directory`: load SQL/DDL files from a directory under `DATASET_ALLOWED_ROOTS`.
+- `POST /api/v1/aiops/sql-optimizer/analyze`: return a version-aware simulated plan, or verify `SELECT VERSION()` and run `EXPLAIN FORMAT='verbose'` through TiDB MCP in `live` mode.
+
+Simulation is an explainable hypothesis based on the SQL AST, DDL, SQLAdvisor-style index ordering and TiDB minor-version profiles. It is deliberately labelled as simulated and never presented as TiDB optimizer output. Production validation requires `live` mode against the requested TiDB version.
+
 MCP tool names are discovered from the server and matched against aliases (`list_schemas`, `list_tables`, `describe_table`, `execute_query`). If a server uses different names, pass a `tool_map` in the introspection request.

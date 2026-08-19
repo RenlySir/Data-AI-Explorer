@@ -1,22 +1,1432 @@
-import React,{useEffect,useRef,useState} from 'react'; import {createRoot} from 'react-dom/client'; import * as echarts from 'echarts'; import {LayoutDashboard,MessageSquare,Activity,Database,Settings,Search,ArrowUpRight,Clock3,CheckCircle2,Play,ChevronRight,LogOut,Network,Link2,UploadCloud,FileUp,X} from 'lucide-react'; import './styles.css';
+import React, { useEffect, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import * as echarts from "echarts";
+import {
+  LayoutDashboard,
+  MessageSquare,
+  Activity,
+  Database,
+  Settings,
+  Search,
+  ArrowUpRight,
+  Clock3,
+  CheckCircle2,
+  Play,
+  ChevronRight,
+  LogOut,
+  Network,
+  Link2,
+  UploadCloud,
+  FileUp,
+  X,
+  WandSparkles,
+  FileCode2,
+  ShieldCheck,
+  GitCompareArrows,
+  CircleAlert,
+} from "lucide-react";
+import "./styles.css";
+import "./optimizer.css";
 
-type Page='workbench'|'query'|'incidents'|'assets'|'catalog';
-type Catalog={database:string;source:string;schemas:{name:string;tables:{name:string;comment?:string;columns:{name:string;data_type:string;comment?:string;nullable:boolean}[]}[]}[];relationships:{from:string;to:string;type:string}[];collected_at:string};
-type QueryResult={operation_id:string;status:string;question:string;sql?:string;answer?:string;columns:string[];rows:unknown[][];evidence:{type:string;label:string;ref:string}[];chart?:{option?:echarts.EChartsOption;type:string;title:string};created_at:string};
-type Dataset={id:string;name:string;kind:string;path:string;rows:number;columns:{name:string;type:string}[];created_at:string};
-const API_BASE=(import.meta.env.VITE_API_BASE_URL||'http://localhost:8080/api/v1').replace(/\/$/,'');
-async function api<T>(path:string,init?:RequestInit):Promise<T>{const isMultipart=typeof FormData!=='undefined'&&init?.body instanceof FormData;const headers=isMultipart?{...(init?.headers||{})}:{'Content-Type':'application/json',...(init?.headers||{})};const response=await fetch(API_BASE+path,{...init,headers});if(!response.ok)throw new Error((await response.text())||('API '+response.status));return response.json() as Promise<T>}
-const incidents=[{id:'INC-240819-001',title:'订单同步延迟超过 SLA',service:'订单数据管道',severity:'P1',status:'处理中',time:'08:42'},{id:'INC-240819-002',title:'TiDB 集群节点磁盘使用率高',service:'生产集群 / tidb-03',severity:'P2',status:'待处理',time:'07:18'},{id:'INC-240818-019',title:'营销报表刷新失败',service:'BI 报表服务',severity:'P2',status:'已恢复',time:'昨天 23:06'}];
-const assets=[{name:'orders',type:'业务表',owner:'数据平台组',rows:'128.4M',quality:98,desc:'订单主表，承载交易链路核心事实数据'},{name:'customer_profile',type:'维表',owner:'客户中心',rows:'4.8M',quality:94,desc:'客户画像与标签宽表，日更'},{name:'dwd_order_detail',type:'明细表',owner:'数仓开发组',rows:'2.1B',quality:91,desc:'订单明细层，支持经营分析与问数'}];
-function Login({onLogin}:{onLogin:()=>void}){return <div className="login"><div className="login-card"><div className="brand-mark">A</div><h1>Aegis AI</h1><p>企业智能数据与运维工作台</p><label>企业账号</label><input placeholder="name@company.com" defaultValue="admin@acme.com"/><label>密码</label><input type="password" defaultValue="12345678"/><button className="primary wide" onClick={onLogin}>登录工作台 <ArrowUpRight size={16}/></button><small>本地演示环境 · 数据不会上传外部服务</small></div></div>}
-function App(){const [logged,setLogged]=useState(false); const [page,setPage]=useState<Page>('workbench'); const [catalog,setCatalog]=useState<Catalog|null>(null); const [notice,setNotice]=useState(''); const [catalogLoading,setCatalogLoading]=useState(false); const nav=[['workbench','工作台',LayoutDashboard],['query','智能问数',MessageSquare],['incidents','AIOps 事件',Activity],['assets','数据资产',Database],['catalog','TiDB 结构',Network]] as const; const loadCatalog=async(endpoint='demo://tidb')=>{setCatalogLoading(true);try{const result=await api<Catalog>('/tidb/mcp/introspect',{method:'POST',body:JSON.stringify({endpoint})});setCatalog(result);setNotice('已采集 '+result.schemas.length+' 个 Schema')}catch(error){setNotice(error instanceof Error?error.message:'TiDB MCP 连接失败')}finally{setCatalogLoading(false)}}; if(!logged)return <Login onLogin={()=>{setLogged(true);void loadCatalog()}}/>; return <div className="app"><aside><div className="logo"><span>A</span><b>Aegis AI</b></div>{nav.map(([id,label,Icon])=><button className={page===id?'nav active':'nav'} onClick={()=>setPage(id)} key={id}><Icon size={18}/>{label}</button>)}<div className="aside-bottom"><button className="nav" onClick={()=>setPage('catalog')}><Settings size={18}/>系统设置</button><button className="nav" onClick={()=>setLogged(false)}><LogOut size={18}/>退出登录</button></div></aside><main><header><div><span className="eyebrow">企业智能平台</span><h2>{nav.find(n=>n[0]===page)?.[1]}</h2></div><div className="user"><span className="status-dot"/>生产环境 <div className="avatar">林</div></div></header>{notice&&<div className="notice"><CheckCircle2 size={15}/>{notice}<button onClick={()=>setNotice('')}><X size={14}/></button></div>}{page==='workbench'&&<Workbench setPage={setPage}/>} {page==='query'&&<QueryV2 catalog={catalog} loadCatalog={loadCatalog}/>} {page==='incidents'&&<Incidents/>} {page==='assets'&&<AssetsV2/>} {page==='catalog'&&<CatalogPage catalog={catalog} loading={catalogLoading} loadCatalog={loadCatalog}/>}</main></div>}
-function Workbench({setPage}:{setPage:(p:Page)=>void}){return <section className="content"><div className="welcome"><div><span className="eyebrow">星期一，8 月 19 日</span><h1>早上好，林工</h1><p>这里是今天的运营概览，所有重要事项都在这里。</p></div><button className="primary" onClick={()=>setPage('query')}>开始问数 <MessageSquare size={16}/></button></div><div className="metrics"><Metric label="待处理事件" value="2" hint="较昨日 -1" tone="red"/><Metric label="今日数据任务" value="24" hint="22 个已完成" tone="green"/><Metric label="数据质量评分" value="96.4" hint="较上周 +1.2" tone="blue"/><Metric label="AI 节省工时" value="18.6h" hint="本周累计" tone="purple"/></div><div className="grid-two"><div className="panel"><div className="panel-head"><h3>需要关注</h3><button className="text-btn" onClick={()=>setPage('incidents')}>查看全部 <ChevronRight size={14}/></button></div>{incidents.slice(0,2).map(i=><div className="list-row" key={i.id}><div className={'severity '+i.severity.toLowerCase()}>{i.severity}</div><div className="row-main"><b>{i.title}</b><span>{i.service} · {i.time}</span></div><span className="chip">{i.status}</span></div>)}</div><div className="panel"><div className="panel-head"><h3>最近问数</h3><button className="text-btn" onClick={()=>setPage('query')}>新建问题 <ChevronRight size={14}/></button></div>{['近 30 天各区域 GMV 趋势','订单取消率最高的商品品类','本月新客留存率'].map((x,i)=><div className="query-row" key={x}><MessageSquare size={15}/><span>{x}</span><small>{i+1} 小时前</small></div>)}</div></div></section>}
-function Metric({label,value,hint,tone}:{label:string,value:string,hint:string,tone:string}){return <div className="metric"><span>{label}</span><strong className={tone}>{value}</strong><small>{hint}</small></div>}
-function Query({query,setQuery,answer,running,runQuery}:{query:string,setQuery:(v:string)=>void,answer:string,running:boolean,runQuery:()=>void}){return <section className="content query-page"><div className="query-intro"><span className="eyebrow">自然语言查询 · 已连接 12 个数据源</span><h1>把问题交给数据</h1><p>用业务语言提问，Aegis 会生成可解释的分析结果。</p></div><div className="query-box"><textarea value={query} onChange={e=>setQuery(e.target.value)} placeholder="例如：近 30 天各区域 GMV 趋势如何？"/><div className="query-actions"><span>支持中文自然语言 · 结果可追溯</span><button className="primary" onClick={runQuery} disabled={running}>{running?<><Clock3 size={16}/>分析中…</>:<><Play size={16}/>开始分析</>}</button></div></div><div className="suggestions">{['近 30 天 GMV 趋势','订单取消率最高的品类','本月新客留存率'].map(x=><button onClick={()=>setQuery(x)} key={x}>{x}</button>)}</div>{(answer||running)&&<div className="result panel"><div className="panel-head"><h3>分析结果</h3><span className="chip success">已验证</span></div>{running&&!answer?<div className="loading">正在检索数据资产并生成 SQL…</div>:<><p className="answer">{answer}</p><div className="evidence"><b>证据来源</b><span>orders · dwd_order_detail</span><span>查询耗时 1.8s</span></div><div className="chart"><div className="bar b1"/><div className="bar b2"/><div className="bar b3"/><div className="bar b4"/><div className="bar b5"/></div></>}</div>}</section>}
-function Incidents(){return <section className="content"><div className="section-head"><div><span className="eyebrow">实时监控 · 过去 24 小时</span><h1>事件中心</h1></div><button className="secondary"><CheckCircle2 size={16}/>标记已读</button></div><div className="filters"><button className="filter active">全部 <b>3</b></button><button className="filter">待处理 <b>1</b></button><button className="filter">处理中 <b>1</b></button><button className="filter">已恢复 <b>1</b></button></div><div className="panel incident-list">{incidents.map(i=><div className="incident" key={i.id}><div className={'severity '+i.severity.toLowerCase()}>{i.severity}</div><div className="row-main"><b>{i.title}</b><span>{i.id} · {i.service}</span></div><span className="chip">{i.status}</span><small>{i.time}</small><ChevronRight size={17}/></div>)}</div></section>}
-function Assets(){return <section className="content"><div className="section-head"><div><span className="eyebrow">数据目录 · 128 个资产</span><h1>数据资产</h1></div><button className="primary"><Database size={16}/>接入数据源</button></div><div className="searchbar"><Search size={18}/><input placeholder="搜索表名、字段或业务描述…"/></div><div className="asset-grid">{assets.map(a=><div className="asset panel" key={a.name}><div className="asset-top"><div className="table-icon"><Database size={18}/></div><span className="chip success">质量 {a.quality}</span></div><h3>{a.name}</h3><span className="asset-type">{a.type} · {a.owner}</span><p>{a.desc}</p><div className="asset-foot"><span>{a.rows} 行</span><button className="text-btn">查看详情 <ChevronRight size={14}/></button></div></div>)}</div></section>}
-function ChartView({option}:{option?:echarts.EChartsOption}){const ref=useRef<HTMLDivElement>(null);useEffect(()=>{if(!ref.current||!option)return;const chart=echarts.init(ref.current);chart.setOption(option);const resize=()=>chart.resize();window.addEventListener('resize',resize);return()=>{window.removeEventListener('resize',resize);chart.dispose()}},[option]);return <div className="echart" ref={ref}/>}
-function QueryV2({catalog,loadCatalog}:{catalog:Catalog|null;loadCatalog:(endpoint?:string)=>Promise<void>}){const [question,setQuestion]=useState('');const [endpoint,setEndpoint]=useState('demo://tidb');const [running,setRunning]=useState(false);const [result,setResult]=useState<QueryResult|null>(null);const [error,setError]=useState('');const run=async()=>{if(!question.trim())return;setRunning(true);setError('');try{const data=await api<QueryResult>('/query/conversations',{method:'POST',body:JSON.stringify({question,source_type:'tidb',mcp_endpoint:endpoint==='demo://tidb'?undefined:endpoint})});setResult(data)}catch(e){setError(e instanceof Error?e.message:'分析失败')}finally{setRunning(false)}};return <section className="content query-page"><div className="query-intro"><span className="eyebrow">自然语言查询 · Text2SQL · ECharts</span><h1>把问题交给数据</h1><p>连接 TiDB MCP 后，系统会读取 Schema、表结构和字段 comment，再生成只读 SQL。</p></div><div className="connector-strip"><div><b><Link2 size={15}/> TiDB MCP 数据源</b><span>{catalog?catalog.database+' · '+catalog.schemas.length+' 个 Schema':'尚未采集结构'}</span></div><input value={endpoint} onChange={e=>setEndpoint(e.target.value)} placeholder="MCP Streamable HTTP 地址，或 demo://tidb"/><button className="secondary" onClick={()=>void loadCatalog(endpoint)} disabled={running}><Network size={15}/>采集结构</button></div><div className="query-box"><textarea value={question} onChange={e=>setQuestion(e.target.value)} placeholder="例如：近 30 天各区域 GMV 趋势如何？"/><div className="query-actions"><span>只读 SQL · 权限检查 · 结果可追溯</span><button className="primary" onClick={run} disabled={running}>{running?<><Clock3 size={16}/>分析中…</>:<><Play size={16}/>开始分析</>}</button></div></div><div className="suggestions">{['近 30 天 GMV 趋势','订单金额按区域汇总','客户数量按区域分布'].map(x=><button onClick={()=>setQuestion(x)} key={x}>{x}</button>)}</div>{error&&<div className="error-banner">{error}</div>}{result&&<div className="result panel"><div className="panel-head"><h3>分析结果</h3><span className="chip success">{result.status==='completed'?'已验证':result.status}</span></div><p className="answer">{result.answer}</p>{result.chart?.option&&<ChartView option={result.chart.option}/>}<div className="result-grid"><div><b>只读 SQL</b><pre>{result.sql}</pre></div><div className="evidence"><b>证据来源</b>{result.evidence.map(item=><span key={item.type+'-'+item.ref}>{item.label}</span>)}</div></div></div>}</section>}
-function AssetsV2(){const [search,setSearch]=useState('');const [datasets,setDatasets]=useState<Dataset[]>([]);const [directory,setDirectory]=useState('');const [message,setMessage]=useState('');const [datasetId,setDatasetId]=useState('');const [datasetQuestion,setDatasetQuestion]=useState('');const [datasetResult,setDatasetResult]=useState<QueryResult|null>(null);const [analyzing,setAnalyzing]=useState(false);const filtered=assets.filter(item=>(item.name+' '+item.desc).toLowerCase().includes(search.toLowerCase()));const upload=async(event:React.ChangeEvent<HTMLInputElement>)=>{const file=event.target.files?.[0];if(!file)return;const body=new FormData();body.append('file',file);try{const item=await api<Dataset>('/datasets/upload',{method:'POST',headers:{},body});setDatasets(current=>[...current,item]);setDatasetId(item.id);setMessage('已上传 '+item.name+'，共 '+item.rows+' 行')}catch(e){setMessage(e instanceof Error?e.message:'上传失败')}};const scan=async()=>{try{const data=await api<Dataset[]>('/datasets/local-directory',{method:'POST',body:JSON.stringify({path:directory})});setDatasets(current=>[...current,...data]);if(data[0])setDatasetId(data[0].id);setMessage('已扫描 '+data.length+' 个文件')}catch(e){setMessage(e instanceof Error?e.message:'目录扫描失败')}};const analyze=async()=>{if(!datasetId||!datasetQuestion.trim())return;setAnalyzing(true);setMessage('');try{const result=await api<QueryResult>('/datasets/analyze',{method:'POST',body:JSON.stringify({question:datasetQuestion,dataset_ids:[datasetId]})});setDatasetResult(result)}catch(e){setMessage(e instanceof Error?e.message:'文件分析失败')}finally{setAnalyzing(false)}};return <section className="content"><div className="section-head"><div><span className="eyebrow">数据目录 · TiDB / 文件数据</span><h1>数据资产</h1></div><label className="primary file-button"><UploadCloud size={16}/>上传 CSV/Parquet<input type="file" accept=".csv,.parquet" onChange={upload}/></label></div><div className="dataset-tools"><b><FileUp size={16}/>文件数据分析</b><input value={directory} onChange={e=>setDirectory(e.target.value)} placeholder="允许目录路径，如 /workspace/data"/><button className="secondary" onClick={scan}>扫描目录</button></div>{message&&<div className="notice">{message}</div>}<div className="searchbar"><Search size={18}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜索表名、字段或业务描述…"/></div><div className="asset-grid">{filtered.map(a=><div className="asset panel" key={a.name}><div className="asset-top"><div className="table-icon"><Database size={18}/></div><span className="chip success">质量 {a.quality}</span></div><h3>{a.name}</h3><span className="asset-type">{a.type} · {a.owner}</span><p>{a.desc}</p><div className="asset-foot"><span>{a.rows} 行</span><button className="text-btn">查看详情 <ChevronRight size={14}/></button></div></div>)}</div>{datasets.length>0&&<><div className="panel dataset-list"><div className="panel-head"><h3>已注册文件数据</h3><span className="chip success">可分析</span></div>{datasets.map(item=><div className="list-row" key={item.id}><FileUp size={16}/><div className="row-main"><b>{item.name}</b><span>{item.kind.toUpperCase()} · {item.rows} 行 · {item.columns.length} 列</span></div><span className="chip">{item.id}</span></div>)}</div><div className="panel dataset-analyzer"><div className="panel-head"><h3>文件数据问答与报表</h3><span className="chip">DuckDB</span></div><div className="dataset-form"><select value={datasetId} onChange={e=>setDatasetId(e.target.value)} aria-label="选择文件数据">{datasets.map(item=><option key={item.id} value={item.id}>{item.name} · {item.rows} 行</option>)}</select><textarea value={datasetQuestion} onChange={e=>setDatasetQuestion(e.target.value)} placeholder="例如：按天汇总金额并展示趋势"/><button className="primary" onClick={analyze} disabled={analyzing}>{analyzing?<><Clock3 size={16}/>分析中…</>:<><Play size={16}/>生成报表</>}</button></div>{datasetResult&&<><p className="answer">{datasetResult.answer}</p>{datasetResult.chart?.option&&<ChartView option={datasetResult.chart.option}/>}<div className="result-grid"><div><b>执行 SQL</b><pre>{datasetResult.sql}</pre></div><div className="evidence"><b>数据来源</b>{datasetResult.evidence.map(item=><span key={item.type+'-'+item.ref}>{item.label}</span>)}</div></div></>}</div></>}</section>}
-function CatalogPage({catalog,loading,loadCatalog}:{catalog:Catalog|null;loading:boolean;loadCatalog:(endpoint?:string)=>Promise<void>}){const [endpoint,setEndpoint]=useState('demo://tidb');return <section className="content"><div className="section-head"><div><span className="eyebrow">MCP 元数据采集 · 字段注释 · 关系图</span><h1>TiDB 数据结构</h1></div><button className="primary" onClick={()=>void loadCatalog(endpoint)} disabled={loading}>{loading?'采集中…':'重新采集'}</button></div><div className="connector-strip"><input value={endpoint} onChange={e=>setEndpoint(e.target.value)} placeholder="MCP endpoint"/><span className="chip">{catalog?.source||'未连接'}</span></div>{catalog?<><div className="schema-summary"><Metric label="Schema" value={String(catalog.schemas.length)} hint={catalog.database} tone="blue"/><Metric label="表" value={String(catalog.schemas.reduce((sum,schema)=>sum+schema.tables.length,0))} hint="已读取表结构" tone="green"/><Metric label="关系" value={String(catalog.relationships.length)} hint="字段/派生关系" tone="purple"/></div><div className="schema-layout"><div className="schema-list">{catalog.schemas.map(schema=><div className="schema-card panel" key={schema.name}><div className="panel-head"><h3><Database size={15}/> {schema.name}</h3><span className="chip">{schema.tables.length} tables</span></div>{schema.tables.map(table=><details key={table.name}><summary><b>{table.name}</b><span>{table.comment||'暂无表 comment'}</span></summary><div className="column-list">{table.columns.map(column=><div className="column-row" key={column.name}><code>{column.name}</code><span>{column.data_type}</span><small>{column.comment||'暂无字段 comment'}</small></div>)}</div></details>)}</div>)}</div><div className="relationship-panel panel"><div className="panel-head"><h3><Network size={15}/> 关系视图</h3><span className="chip success">可追溯</span></div>{catalog.relationships.map(edge=><div className="edge" key={edge.from+'-'+edge.to}><span>{edge.from}</span><Link2 size={15}/><span>{edge.to}</span><small>{edge.type}</small></div>)}</div></div></>:<div className="empty panel">尚未采集 TiDB 结构，请点击重新采集。</div>}</section>}
-createRoot(document.getElementById('root')!).render(<App/>);
+type Page =
+  | "workbench"
+  | "query"
+  | "incidents"
+  | "assets"
+  | "catalog"
+  | "sql-optimizer";
+type Catalog = {
+  database: string;
+  source: string;
+  schemas: {
+    name: string;
+    tables: {
+      name: string;
+      comment?: string;
+      columns: {
+        name: string;
+        data_type: string;
+        comment?: string;
+        nullable: boolean;
+      }[];
+    }[];
+  }[];
+  relationships: { from: string; to: string; type: string }[];
+  collected_at: string;
+};
+type QueryResult = {
+  operation_id: string;
+  status: string;
+  question: string;
+  sql?: string;
+  answer?: string;
+  columns: string[];
+  rows: unknown[][];
+  evidence: { type: string; label: string; ref: string }[];
+  chart?: { option?: echarts.EChartsOption; type: string; title: string };
+  created_at: string;
+};
+type Dataset = {
+  id: string;
+  name: string;
+  kind: string;
+  path: string;
+  rows: number;
+  columns: { name: string; type: string }[];
+  created_at: string;
+};
+type OptimizerVersion = {
+  minor: string;
+  label: string;
+  code_tag: string;
+  code_commit: string;
+  features: string[];
+  release_notes: string;
+  source: string;
+};
+type OptimizeResult = {
+  analysis_id: string;
+  requested_version: string;
+  profile_version: string;
+  optimizer_mode: "simulated" | "live";
+  confidence: "low" | "medium" | "high";
+  version_verified: boolean;
+  actual_tidb_version?: string;
+  summary: string;
+  tables: string[];
+  plan: {
+    id: string;
+    est_rows: string;
+    task: string;
+    access_object: string;
+    operator_info: string;
+    risk: "low" | "medium" | "high";
+  }[];
+  recommendations: {
+    id: string;
+    severity: "info" | "warning" | "critical";
+    category: string;
+    title: string;
+    rationale: string;
+    action: string;
+    evidence: string[];
+  }[];
+  version_features: string[];
+  assumptions: string[];
+  sources: { label: string; url: string; ref: string }[];
+};
+const API_BASE = (
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api/v1"
+).replace(/\/$/, "");
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const isMultipart =
+    typeof FormData !== "undefined" && init?.body instanceof FormData;
+  const headers = isMultipart
+    ? { ...(init?.headers || {}) }
+    : { "Content-Type": "application/json", ...(init?.headers || {}) };
+  const response = await fetch(API_BASE + path, { ...init, headers });
+  if (!response.ok)
+    throw new Error((await response.text()) || "API " + response.status);
+  return response.json() as Promise<T>;
+}
+const incidents = [
+  {
+    id: "INC-240819-001",
+    title: "订单同步延迟超过 SLA",
+    service: "订单数据管道",
+    severity: "P1",
+    status: "处理中",
+    time: "08:42",
+  },
+  {
+    id: "INC-240819-002",
+    title: "TiDB 集群节点磁盘使用率高",
+    service: "生产集群 / tidb-03",
+    severity: "P2",
+    status: "待处理",
+    time: "07:18",
+  },
+  {
+    id: "INC-240818-019",
+    title: "营销报表刷新失败",
+    service: "BI 报表服务",
+    severity: "P2",
+    status: "已恢复",
+    time: "昨天 23:06",
+  },
+];
+const assets = [
+  {
+    name: "orders",
+    type: "业务表",
+    owner: "数据平台组",
+    rows: "128.4M",
+    quality: 98,
+    desc: "订单主表，承载交易链路核心事实数据",
+  },
+  {
+    name: "customer_profile",
+    type: "维表",
+    owner: "客户中心",
+    rows: "4.8M",
+    quality: 94,
+    desc: "客户画像与标签宽表，日更",
+  },
+  {
+    name: "dwd_order_detail",
+    type: "明细表",
+    owner: "数仓开发组",
+    rows: "2.1B",
+    quality: 91,
+    desc: "订单明细层，支持经营分析与问数",
+  },
+];
+function Login({ onLogin }: { onLogin: () => void }) {
+  return (
+    <div className="login">
+      <div className="login-card">
+        <div className="brand-mark">A</div>
+        <h1>Aegis AI</h1>
+        <p>企业智能数据与运维工作台</p>
+        <label>企业账号</label>
+        <input placeholder="name@company.com" defaultValue="admin@acme.com" />
+        <label>密码</label>
+        <input type="password" defaultValue="12345678" />
+        <button className="primary wide" onClick={onLogin}>
+          登录工作台 <ArrowUpRight size={16} />
+        </button>
+        <small>本地演示环境 · 数据不会上传外部服务</small>
+      </div>
+    </div>
+  );
+}
+function App() {
+  const [logged, setLogged] = useState(false);
+  const [page, setPage] = useState<Page>("workbench");
+  const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [notice, setNotice] = useState("");
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const nav = [
+    ["workbench", "工作台", LayoutDashboard],
+    ["query", "智能问数", MessageSquare],
+    ["incidents", "AIOps 事件", Activity],
+    ["sql-optimizer", "SQL 优化", WandSparkles],
+    ["assets", "数据资产", Database],
+    ["catalog", "TiDB 结构", Network],
+  ] as const;
+  const loadCatalog = async (endpoint = "demo://tidb") => {
+    setCatalogLoading(true);
+    try {
+      const result = await api<Catalog>("/tidb/mcp/introspect", {
+        method: "POST",
+        body: JSON.stringify({ endpoint }),
+      });
+      setCatalog(result);
+      setNotice("已采集 " + result.schemas.length + " 个 Schema");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "TiDB MCP 连接失败");
+    } finally {
+      setCatalogLoading(false);
+    }
+  };
+  if (!logged)
+    return (
+      <Login
+        onLogin={() => {
+          setLogged(true);
+          void loadCatalog();
+        }}
+      />
+    );
+  return (
+    <div className="app">
+      <aside>
+        <div className="logo">
+          <span>A</span>
+          <b>Aegis AI</b>
+        </div>
+        {nav.map(([id, label, Icon]) => (
+          <button
+            className={page === id ? "nav active" : "nav"}
+            onClick={() => setPage(id)}
+            key={id}
+          >
+            <Icon size={18} />
+            {label}
+          </button>
+        ))}
+        <div className="aside-bottom">
+          <button className="nav" onClick={() => setPage("catalog")}>
+            <Settings size={18} />
+            系统设置
+          </button>
+          <button className="nav" onClick={() => setLogged(false)}>
+            <LogOut size={18} />
+            退出登录
+          </button>
+        </div>
+      </aside>
+      <main>
+        <header>
+          <div>
+            <span className="eyebrow">企业智能平台</span>
+            <h2>{nav.find((n) => n[0] === page)?.[1]}</h2>
+          </div>
+          <div className="user">
+            <span className="status-dot" />
+            生产环境 <div className="avatar">林</div>
+          </div>
+        </header>
+        {notice && (
+          <div className="notice">
+            <CheckCircle2 size={15} />
+            {notice}
+            <button onClick={() => setNotice("")}>
+              <X size={14} />
+            </button>
+          </div>
+        )}
+        {page === "workbench" && <Workbench setPage={setPage} />}{" "}
+        {page === "query" && (
+          <QueryV2 catalog={catalog} loadCatalog={loadCatalog} />
+        )}{" "}
+        {page === "incidents" && <Incidents />}{" "}
+        {page === "sql-optimizer" && <SQLOptimizerPage />}{" "}
+        {page === "assets" && <AssetsV2 />}{" "}
+        {page === "catalog" && (
+          <CatalogPage
+            catalog={catalog}
+            loading={catalogLoading}
+            loadCatalog={loadCatalog}
+          />
+        )}
+      </main>
+    </div>
+  );
+}
+function Workbench({ setPage }: { setPage: (p: Page) => void }) {
+  return (
+    <section className="content">
+      <div className="welcome">
+        <div>
+          <span className="eyebrow">星期一，8 月 19 日</span>
+          <h1>早上好，林工</h1>
+          <p>这里是今天的运营概览，所有重要事项都在这里。</p>
+        </div>
+        <button className="primary" onClick={() => setPage("query")}>
+          开始问数 <MessageSquare size={16} />
+        </button>
+      </div>
+      <div className="metrics">
+        <Metric label="待处理事件" value="2" hint="较昨日 -1" tone="red" />
+        <Metric
+          label="今日数据任务"
+          value="24"
+          hint="22 个已完成"
+          tone="green"
+        />
+        <Metric
+          label="数据质量评分"
+          value="96.4"
+          hint="较上周 +1.2"
+          tone="blue"
+        />
+        <Metric
+          label="AI 节省工时"
+          value="18.6h"
+          hint="本周累计"
+          tone="purple"
+        />
+      </div>
+      <div className="grid-two">
+        <div className="panel">
+          <div className="panel-head">
+            <h3>需要关注</h3>
+            <button className="text-btn" onClick={() => setPage("incidents")}>
+              查看全部 <ChevronRight size={14} />
+            </button>
+          </div>
+          {incidents.slice(0, 2).map((i) => (
+            <div className="list-row" key={i.id}>
+              <div className={"severity " + i.severity.toLowerCase()}>
+                {i.severity}
+              </div>
+              <div className="row-main">
+                <b>{i.title}</b>
+                <span>
+                  {i.service} · {i.time}
+                </span>
+              </div>
+              <span className="chip">{i.status}</span>
+            </div>
+          ))}
+        </div>
+        <div className="panel">
+          <div className="panel-head">
+            <h3>最近问数</h3>
+            <button className="text-btn" onClick={() => setPage("query")}>
+              新建问题 <ChevronRight size={14} />
+            </button>
+          </div>
+          {[
+            "近 30 天各区域 GMV 趋势",
+            "订单取消率最高的商品品类",
+            "本月新客留存率",
+          ].map((x, i) => (
+            <div className="query-row" key={x}>
+              <MessageSquare size={15} />
+              <span>{x}</span>
+              <small>{i + 1} 小时前</small>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+function Metric({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  tone: string;
+}) {
+  return (
+    <div className="metric">
+      <span>{label}</span>
+      <strong className={tone}>{value}</strong>
+      <small>{hint}</small>
+    </div>
+  );
+}
+function Query({
+  query,
+  setQuery,
+  answer,
+  running,
+  runQuery,
+}: {
+  query: string;
+  setQuery: (v: string) => void;
+  answer: string;
+  running: boolean;
+  runQuery: () => void;
+}) {
+  return (
+    <section className="content query-page">
+      <div className="query-intro">
+        <span className="eyebrow">自然语言查询 · 已连接 12 个数据源</span>
+        <h1>把问题交给数据</h1>
+        <p>用业务语言提问，Aegis 会生成可解释的分析结果。</p>
+      </div>
+      <div className="query-box">
+        <textarea
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="例如：近 30 天各区域 GMV 趋势如何？"
+        />
+        <div className="query-actions">
+          <span>支持中文自然语言 · 结果可追溯</span>
+          <button className="primary" onClick={runQuery} disabled={running}>
+            {running ? (
+              <>
+                <Clock3 size={16} />
+                分析中…
+              </>
+            ) : (
+              <>
+                <Play size={16} />
+                开始分析
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+      <div className="suggestions">
+        {["近 30 天 GMV 趋势", "订单取消率最高的品类", "本月新客留存率"].map(
+          (x) => (
+            <button onClick={() => setQuery(x)} key={x}>
+              {x}
+            </button>
+          ),
+        )}
+      </div>
+      {(answer || running) && (
+        <div className="result panel">
+          <div className="panel-head">
+            <h3>分析结果</h3>
+            <span className="chip success">已验证</span>
+          </div>
+          {running && !answer ? (
+            <div className="loading">正在检索数据资产并生成 SQL…</div>
+          ) : (
+            <>
+              <p className="answer">{answer}</p>
+              <div className="evidence">
+                <b>证据来源</b>
+                <span>orders · dwd_order_detail</span>
+                <span>查询耗时 1.8s</span>
+              </div>
+              <div className="chart">
+                <div className="bar b1" />
+                <div className="bar b2" />
+                <div className="bar b3" />
+                <div className="bar b4" />
+                <div className="bar b5" />
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+function Incidents() {
+  return (
+    <section className="content">
+      <div className="section-head">
+        <div>
+          <span className="eyebrow">实时监控 · 过去 24 小时</span>
+          <h1>事件中心</h1>
+        </div>
+        <button className="secondary">
+          <CheckCircle2 size={16} />
+          标记已读
+        </button>
+      </div>
+      <div className="filters">
+        <button className="filter active">
+          全部 <b>3</b>
+        </button>
+        <button className="filter">
+          待处理 <b>1</b>
+        </button>
+        <button className="filter">
+          处理中 <b>1</b>
+        </button>
+        <button className="filter">
+          已恢复 <b>1</b>
+        </button>
+      </div>
+      <div className="panel incident-list">
+        {incidents.map((i) => (
+          <div className="incident" key={i.id}>
+            <div className={"severity " + i.severity.toLowerCase()}>
+              {i.severity}
+            </div>
+            <div className="row-main">
+              <b>{i.title}</b>
+              <span>
+                {i.id} · {i.service}
+              </span>
+            </div>
+            <span className="chip">{i.status}</span>
+            <small>{i.time}</small>
+            <ChevronRight size={17} />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+function Assets() {
+  return (
+    <section className="content">
+      <div className="section-head">
+        <div>
+          <span className="eyebrow">数据目录 · 128 个资产</span>
+          <h1>数据资产</h1>
+        </div>
+        <button className="primary">
+          <Database size={16} />
+          接入数据源
+        </button>
+      </div>
+      <div className="searchbar">
+        <Search size={18} />
+        <input placeholder="搜索表名、字段或业务描述…" />
+      </div>
+      <div className="asset-grid">
+        {assets.map((a) => (
+          <div className="asset panel" key={a.name}>
+            <div className="asset-top">
+              <div className="table-icon">
+                <Database size={18} />
+              </div>
+              <span className="chip success">质量 {a.quality}</span>
+            </div>
+            <h3>{a.name}</h3>
+            <span className="asset-type">
+              {a.type} · {a.owner}
+            </span>
+            <p>{a.desc}</p>
+            <div className="asset-foot">
+              <span>{a.rows} 行</span>
+              <button className="text-btn">
+                查看详情 <ChevronRight size={14} />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+function ChartView({ option }: { option?: echarts.EChartsOption }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!ref.current || !option) return;
+    const chart = echarts.init(ref.current);
+    chart.setOption(option);
+    const resize = () => chart.resize();
+    window.addEventListener("resize", resize);
+    return () => {
+      window.removeEventListener("resize", resize);
+      chart.dispose();
+    };
+  }, [option]);
+  return <div className="echart" ref={ref} />;
+}
+function QueryV2({
+  catalog,
+  loadCatalog,
+}: {
+  catalog: Catalog | null;
+  loadCatalog: (endpoint?: string) => Promise<void>;
+}) {
+  const [question, setQuestion] = useState("");
+  const [endpoint, setEndpoint] = useState("demo://tidb");
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<QueryResult | null>(null);
+  const [error, setError] = useState("");
+  const run = async () => {
+    if (!question.trim()) return;
+    setRunning(true);
+    setError("");
+    try {
+      const data = await api<QueryResult>("/query/conversations", {
+        method: "POST",
+        body: JSON.stringify({
+          question,
+          source_type: "tidb",
+          mcp_endpoint: endpoint === "demo://tidb" ? undefined : endpoint,
+        }),
+      });
+      setResult(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "分析失败");
+    } finally {
+      setRunning(false);
+    }
+  };
+  return (
+    <section className="content query-page">
+      <div className="query-intro">
+        <span className="eyebrow">自然语言查询 · Text2SQL · ECharts</span>
+        <h1>把问题交给数据</h1>
+        <p>
+          连接 TiDB MCP 后，系统会读取 Schema、表结构和字段 comment，再生成只读
+          SQL。
+        </p>
+      </div>
+      <div className="connector-strip">
+        <div>
+          <b>
+            <Link2 size={15} /> TiDB MCP 数据源
+          </b>
+          <span>
+            {catalog
+              ? catalog.database + " · " + catalog.schemas.length + " 个 Schema"
+              : "尚未采集结构"}
+          </span>
+        </div>
+        <input
+          value={endpoint}
+          onChange={(e) => setEndpoint(e.target.value)}
+          placeholder="MCP Streamable HTTP 地址，或 demo://tidb"
+        />
+        <button
+          className="secondary"
+          onClick={() => void loadCatalog(endpoint)}
+          disabled={running}
+        >
+          <Network size={15} />
+          采集结构
+        </button>
+      </div>
+      <div className="query-box">
+        <textarea
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder="例如：近 30 天各区域 GMV 趋势如何？"
+        />
+        <div className="query-actions">
+          <span>只读 SQL · 权限检查 · 结果可追溯</span>
+          <button className="primary" onClick={run} disabled={running}>
+            {running ? (
+              <>
+                <Clock3 size={16} />
+                分析中…
+              </>
+            ) : (
+              <>
+                <Play size={16} />
+                开始分析
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+      <div className="suggestions">
+        {["近 30 天 GMV 趋势", "订单金额按区域汇总", "客户数量按区域分布"].map(
+          (x) => (
+            <button onClick={() => setQuestion(x)} key={x}>
+              {x}
+            </button>
+          ),
+        )}
+      </div>
+      {error && <div className="error-banner">{error}</div>}
+      {result && (
+        <div className="result panel">
+          <div className="panel-head">
+            <h3>分析结果</h3>
+            <span className="chip success">
+              {result.status === "completed" ? "已验证" : result.status}
+            </span>
+          </div>
+          <p className="answer">{result.answer}</p>
+          {result.chart?.option && <ChartView option={result.chart.option} />}
+          <div className="result-grid">
+            <div>
+              <b>只读 SQL</b>
+              <pre>{result.sql}</pre>
+            </div>
+            <div className="evidence">
+              <b>证据来源</b>
+              {result.evidence.map((item) => (
+                <span key={item.type + "-" + item.ref}>{item.label}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+function AssetsV2() {
+  const [search, setSearch] = useState("");
+  const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [directory, setDirectory] = useState("");
+  const [message, setMessage] = useState("");
+  const [datasetId, setDatasetId] = useState("");
+  const [datasetQuestion, setDatasetQuestion] = useState("");
+  const [datasetResult, setDatasetResult] = useState<QueryResult | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const filtered = assets.filter((item) =>
+    (item.name + " " + item.desc).toLowerCase().includes(search.toLowerCase()),
+  );
+  const upload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const body = new FormData();
+    body.append("file", file);
+    try {
+      const item = await api<Dataset>("/datasets/upload", {
+        method: "POST",
+        headers: {},
+        body,
+      });
+      setDatasets((current) => [...current, item]);
+      setDatasetId(item.id);
+      setMessage("已上传 " + item.name + "，共 " + item.rows + " 行");
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "上传失败");
+    }
+  };
+  const scan = async () => {
+    try {
+      const data = await api<Dataset[]>("/datasets/local-directory", {
+        method: "POST",
+        body: JSON.stringify({ path: directory }),
+      });
+      setDatasets((current) => [...current, ...data]);
+      if (data[0]) setDatasetId(data[0].id);
+      setMessage("已扫描 " + data.length + " 个文件");
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "目录扫描失败");
+    }
+  };
+  const analyze = async () => {
+    if (!datasetId || !datasetQuestion.trim()) return;
+    setAnalyzing(true);
+    setMessage("");
+    try {
+      const result = await api<QueryResult>("/datasets/analyze", {
+        method: "POST",
+        body: JSON.stringify({
+          question: datasetQuestion,
+          dataset_ids: [datasetId],
+        }),
+      });
+      setDatasetResult(result);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "文件分析失败");
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+  return (
+    <section className="content">
+      <div className="section-head">
+        <div>
+          <span className="eyebrow">数据目录 · TiDB / 文件数据</span>
+          <h1>数据资产</h1>
+        </div>
+        <label className="primary file-button">
+          <UploadCloud size={16} />
+          上传 CSV/Parquet
+          <input type="file" accept=".csv,.parquet" onChange={upload} />
+        </label>
+      </div>
+      <div className="dataset-tools">
+        <b>
+          <FileUp size={16} />
+          文件数据分析
+        </b>
+        <input
+          value={directory}
+          onChange={(e) => setDirectory(e.target.value)}
+          placeholder="允许目录路径，如 /workspace/data"
+        />
+        <button className="secondary" onClick={scan}>
+          扫描目录
+        </button>
+      </div>
+      {message && <div className="notice">{message}</div>}
+      <div className="searchbar">
+        <Search size={18} />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="搜索表名、字段或业务描述…"
+        />
+      </div>
+      <div className="asset-grid">
+        {filtered.map((a) => (
+          <div className="asset panel" key={a.name}>
+            <div className="asset-top">
+              <div className="table-icon">
+                <Database size={18} />
+              </div>
+              <span className="chip success">质量 {a.quality}</span>
+            </div>
+            <h3>{a.name}</h3>
+            <span className="asset-type">
+              {a.type} · {a.owner}
+            </span>
+            <p>{a.desc}</p>
+            <div className="asset-foot">
+              <span>{a.rows} 行</span>
+              <button className="text-btn">
+                查看详情 <ChevronRight size={14} />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {datasets.length > 0 && (
+        <>
+          <div className="panel dataset-list">
+            <div className="panel-head">
+              <h3>已注册文件数据</h3>
+              <span className="chip success">可分析</span>
+            </div>
+            {datasets.map((item) => (
+              <div className="list-row" key={item.id}>
+                <FileUp size={16} />
+                <div className="row-main">
+                  <b>{item.name}</b>
+                  <span>
+                    {item.kind.toUpperCase()} · {item.rows} 行 ·{" "}
+                    {item.columns.length} 列
+                  </span>
+                </div>
+                <span className="chip">{item.id}</span>
+              </div>
+            ))}
+          </div>
+          <div className="panel dataset-analyzer">
+            <div className="panel-head">
+              <h3>文件数据问答与报表</h3>
+              <span className="chip">DuckDB</span>
+            </div>
+            <div className="dataset-form">
+              <select
+                value={datasetId}
+                onChange={(e) => setDatasetId(e.target.value)}
+                aria-label="选择文件数据"
+              >
+                {datasets.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name} · {item.rows} 行
+                  </option>
+                ))}
+              </select>
+              <textarea
+                value={datasetQuestion}
+                onChange={(e) => setDatasetQuestion(e.target.value)}
+                placeholder="例如：按天汇总金额并展示趋势"
+              />
+              <button
+                className="primary"
+                onClick={analyze}
+                disabled={analyzing}
+              >
+                {analyzing ? (
+                  <>
+                    <Clock3 size={16} />
+                    分析中…
+                  </>
+                ) : (
+                  <>
+                    <Play size={16} />
+                    生成报表
+                  </>
+                )}
+              </button>
+            </div>
+            {datasetResult && (
+              <>
+                <p className="answer">{datasetResult.answer}</p>
+                {datasetResult.chart?.option && (
+                  <ChartView option={datasetResult.chart.option} />
+                )}
+                <div className="result-grid">
+                  <div>
+                    <b>执行 SQL</b>
+                    <pre>{datasetResult.sql}</pre>
+                  </div>
+                  <div className="evidence">
+                    <b>数据来源</b>
+                    {datasetResult.evidence.map((item) => (
+                      <span key={item.type + "-" + item.ref}>{item.label}</span>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+function CatalogPage({
+  catalog,
+  loading,
+  loadCatalog,
+}: {
+  catalog: Catalog | null;
+  loading: boolean;
+  loadCatalog: (endpoint?: string) => Promise<void>;
+}) {
+  const [endpoint, setEndpoint] = useState("demo://tidb");
+  return (
+    <section className="content">
+      <div className="section-head">
+        <div>
+          <span className="eyebrow">MCP 元数据采集 · 字段注释 · 关系图</span>
+          <h1>TiDB 数据结构</h1>
+        </div>
+        <button
+          className="primary"
+          onClick={() => void loadCatalog(endpoint)}
+          disabled={loading}
+        >
+          {loading ? "采集中…" : "重新采集"}
+        </button>
+      </div>
+      <div className="connector-strip">
+        <input
+          value={endpoint}
+          onChange={(e) => setEndpoint(e.target.value)}
+          placeholder="MCP endpoint"
+        />
+        <span className="chip">{catalog?.source || "未连接"}</span>
+      </div>
+      {catalog ? (
+        <>
+          <div className="schema-summary">
+            <Metric
+              label="Schema"
+              value={String(catalog.schemas.length)}
+              hint={catalog.database}
+              tone="blue"
+            />
+            <Metric
+              label="表"
+              value={String(
+                catalog.schemas.reduce(
+                  (sum, schema) => sum + schema.tables.length,
+                  0,
+                ),
+              )}
+              hint="已读取表结构"
+              tone="green"
+            />
+            <Metric
+              label="关系"
+              value={String(catalog.relationships.length)}
+              hint="字段/派生关系"
+              tone="purple"
+            />
+          </div>
+          <div className="schema-layout">
+            <div className="schema-list">
+              {catalog.schemas.map((schema) => (
+                <div className="schema-card panel" key={schema.name}>
+                  <div className="panel-head">
+                    <h3>
+                      <Database size={15} /> {schema.name}
+                    </h3>
+                    <span className="chip">{schema.tables.length} tables</span>
+                  </div>
+                  {schema.tables.map((table) => (
+                    <details key={table.name}>
+                      <summary>
+                        <b>{table.name}</b>
+                        <span>{table.comment || "暂无表 comment"}</span>
+                      </summary>
+                      <div className="column-list">
+                        {table.columns.map((column) => (
+                          <div className="column-row" key={column.name}>
+                            <code>{column.name}</code>
+                            <span>{column.data_type}</span>
+                            <small>
+                              {column.comment || "暂无字段 comment"}
+                            </small>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              ))}
+            </div>
+            <div className="relationship-panel panel">
+              <div className="panel-head">
+                <h3>
+                  <Network size={15} /> 关系视图
+                </h3>
+                <span className="chip success">可追溯</span>
+              </div>
+              {catalog.relationships.map((edge) => (
+                <div className="edge" key={edge.from + "-" + edge.to}>
+                  <span>{edge.from}</span>
+                  <Link2 size={15} />
+                  <span>{edge.to}</span>
+                  <small>{edge.type}</small>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="empty panel">尚未采集 TiDB 结构，请点击重新采集。</div>
+      )}
+    </section>
+  );
+}
+function SQLOptimizerPage() {
+  const [versions, setVersions] = useState<OptimizerVersion[]>([]);
+  const [version, setVersion] = useState("8.5");
+  const [mode, setMode] = useState<"simulate" | "live">("simulate");
+  const [sql, setSql] = useState(
+    "SELECT o.customer_id, SUM(o.amount) AS total_amount\nFROM sales.orders o\nWHERE o.created_at >= '2026-01-01'\nGROUP BY o.customer_id\nORDER BY total_amount DESC;",
+  );
+  const [ddl, setDdl] = useState(
+    "CREATE TABLE orders (\n  order_id BIGINT PRIMARY KEY,\n  customer_id BIGINT,\n  created_at DATETIME,\n  amount DECIMAL(18,2)\n);",
+  );
+  const [endpoint, setEndpoint] = useState("");
+  const [directoryOpen, setDirectoryOpen] = useState(false);
+  const [directoryPath, setDirectoryPath] = useState(
+    "/workspace/data/sql-optimizer",
+  );
+  const [bundle, setBundle] = useState<{
+    files: string[];
+    sql_items: { name: string; sql: string }[];
+    ddl: string;
+  } | null>(null);
+  const [result, setResult] = useState<OptimizeResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    void api<OptimizerVersion[]>("/aiops/sql-optimizer/versions")
+      .then(setVersions)
+      .catch((e) => setError(e instanceof Error ? e.message : "版本加载失败"));
+  }, []);
+  const analyze = async () => {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const data = await api<OptimizeResult>("/aiops/sql-optimizer/analyze", {
+        method: "POST",
+        body: JSON.stringify({
+          sql,
+          ddl,
+          tidb_version: version,
+          plan_mode: mode,
+          mcp_endpoint: mode === "live" ? endpoint || undefined : undefined,
+        }),
+      });
+      setResult(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "SQL 优化失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const upload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
+    const body = new FormData();
+    files.forEach((file) => body.append("files", file));
+    try {
+      const data = await api<{
+        files: string[];
+        sql_items: { name: string; sql: string }[];
+        ddl: string;
+      }>("/aiops/sql-optimizer/inputs/upload", {
+        method: "POST",
+        headers: {},
+        body,
+      });
+      setBundle(data);
+      if (data.sql_items[0]) setSql(data.sql_items[0].sql);
+      if (data.ddl) setDdl(data.ddl);
+      setMessage("已读取 " + data.files.length + " 个 SQL/DDL 文件");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "SQL 文件读取失败");
+    }
+  };
+  const scan = async () => {
+    if (!directoryPath.trim()) return;
+    try {
+      const data = await api<{
+        files: string[];
+        sql_items: { name: string; sql: string }[];
+        ddl: string;
+      }>("/aiops/sql-optimizer/inputs/local-directory", {
+        method: "POST",
+        body: JSON.stringify({ path: directoryPath.trim() }),
+      });
+      setBundle(data);
+      if (data.sql_items[0]) setSql(data.sql_items[0].sql);
+      if (data.ddl) setDdl(data.ddl);
+      setMessage("已读取目录中的 " + data.files.length + " 个文件");
+      setDirectoryOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "目录读取失败");
+    }
+  };
+  const profile = versions.find((item) => item.minor === version);
+  return (
+    <section className="content sql-optimizer-page">
+      <div className="section-head">
+        <div>
+          <span className="eyebrow">
+            AIOps · TiDB Planner · SQLAdvisor 方法
+          </span>
+          <h1>SQL 优化</h1>
+          <p className="section-subtitle">
+            输入 SQL 与表结构，按 TiDB
+            版本生成可解释的索引、改写和执行计划建议。
+          </p>
+        </div>
+        <div className="sql-actions">
+          <label className="primary file-button">
+            <UploadCloud size={16} />
+            读取 SQL/DDL
+            <input
+              type="file"
+              accept=".sql,.ddl,.txt"
+              multiple
+              onChange={upload}
+            />
+          </label>
+          <button className="secondary" onClick={() => setDirectoryOpen(true)}>
+            <FileCode2 size={16} />
+            读取受控目录
+          </button>
+        </div>
+      </div>
+      <div className="optimizer-toolbar">
+        <div className="toolbar-field">
+          <label>TiDB 版本</label>
+          <select value={version} onChange={(e) => setVersion(e.target.value)}>
+            {versions.map((item) => (
+              <option key={item.minor} value={item.minor}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="mode-toggle">
+          <label>计划模式</label>
+          <div>
+            <button
+              className={mode === "simulate" ? "mode active" : "mode"}
+              onClick={() => setMode("simulate")}
+            >
+              <GitCompareArrows size={15} />
+              版本模拟
+            </button>
+            <button
+              className={mode === "live" ? "mode active" : "mode"}
+              onClick={() => setMode("live")}
+            >
+              <ShieldCheck size={15} />
+              真实 EXPLAIN
+            </button>
+          </div>
+        </div>
+        {mode === "live" && (
+          <div className="toolbar-field endpoint-field">
+            <label>MCP endpoint</label>
+            <input
+              value={endpoint}
+              onChange={(e) => setEndpoint(e.target.value)}
+              placeholder="已采集连接可留空"
+            />
+          </div>
+        )}
+        <button
+          className="primary optimize-button"
+          onClick={analyze}
+          disabled={busy || !sql.trim()}
+        >
+          {busy ? (
+            <>
+              <Clock3 size={16} />
+              分析中…
+            </>
+          ) : (
+            <>
+              <WandSparkles size={16} />
+              生成优化建议
+            </>
+          )}
+        </button>
+      </div>
+      {profile && (
+        <div className="profile-strip">
+          <b>{profile.label}</b>
+          <span>{profile.features.slice(0, 3).join(" · ")}</span>
+          <a href={profile.release_notes} target="_blank" rel="noreferrer">
+            查看 Release Notes
+          </a>
+        </div>
+      )}
+      {message && <div className="notice">{message}</div>}
+      {error && <div className="error-banner">{error}</div>}
+      <div className="sql-editor-grid">
+        <div className="editor-panel panel">
+          <div className="panel-head">
+            <h3>
+              <FileCode2 size={16} /> SQL 输入
+            </h3>
+            <span className="chip">只读分析</span>
+          </div>
+          <textarea
+            className="code-editor"
+            value={sql}
+            onChange={(e) => setSql(e.target.value)}
+            spellCheck={false}
+          />
+        </div>
+        <div className="editor-panel panel">
+          <div className="panel-head">
+            <h3>
+              <Database size={16} /> 表结构 / DDL
+            </h3>
+            <span className="chip">可选</span>
+          </div>
+          <textarea
+            className="code-editor"
+            value={ddl}
+            onChange={(e) => setDdl(e.target.value)}
+            spellCheck={false}
+          />
+        </div>
+      </div>
+      {bundle && (
+        <div className="input-bundle panel">
+          <b>已加载文件</b>
+          {bundle.files.map((file) => (
+            <span className="chip" key={file}>
+              {file}
+            </span>
+          ))}
+        </div>
+      )}
+      {result && <OptimizerResult result={result} />}
+      {directoryOpen && (
+        <div
+          className="dialog-backdrop"
+          role="presentation"
+          onMouseDown={() => setDirectoryOpen(false)}
+        >
+          <div
+            className="directory-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="directory-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="dialog-title">
+              <div>
+                <span className="eyebrow">本地部署目录</span>
+                <h3 id="directory-title">读取 SQL / DDL 目录</h3>
+              </div>
+              <button className="icon-button" onClick={() => setDirectoryOpen(false)} aria-label="关闭">
+                <X size={18} />
+              </button>
+            </div>
+            <label htmlFor="optimizer-directory">受控目录路径</label>
+            <input
+              id="optimizer-directory"
+              autoFocus
+              value={directoryPath}
+              onChange={(event) => setDirectoryPath(event.target.value)}
+              onKeyDown={(event) => { if (event.key === "Enter") void scan(); }}
+            />
+            <div className="dialog-actions">
+              <button className="secondary" onClick={() => setDirectoryOpen(false)}>取消</button>
+              <button className="primary" onClick={() => void scan()} disabled={!directoryPath.trim()}>
+                <FileCode2 size={16} />读取目录
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+function OptimizerResult({ result }: { result: OptimizeResult }) {
+  return (
+    <div className="optimizer-result">
+      <div className="optimizer-summary panel">
+        <div className="panel-head">
+          <div>
+            <span className="eyebrow">分析结果 · {result.analysis_id}</span>
+            <h2>{result.summary}</h2>
+          </div>
+          <span
+            className={
+              result.optimizer_mode === "live"
+                ? "chip success"
+                : "chip simulated"
+            }
+          >
+            {result.optimizer_mode === "live" ? "真实 EXPLAIN" : "版本模拟"}
+          </span>
+        </div>
+        <div className="result-meta">
+          <span>目标版本 {result.requested_version}</span>
+          <span>规则包 {result.profile_version}</span>
+          <span>置信度 {result.confidence}</span>
+          {result.actual_tidb_version && (
+            <span>集群 {result.actual_tidb_version}</span>
+          )}
+        </div>
+        {result.assumptions.length > 0 && (
+          <div className="assumptions">
+            <CircleAlert size={16} />
+            {result.assumptions.map((item) => (
+              <span key={item}>{item}</span>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="optimizer-columns">
+        <div className="plan-panel panel">
+          <div className="panel-head">
+            <h3>执行计划</h3>
+            <span className="chip">{result.plan.length} 节点</span>
+          </div>
+          {result.plan.map((node) => (
+            <div className="plan-node" key={node.id + "-" + node.access_object}>
+              <div className={"plan-risk " + node.risk} />
+              <div className="row-main">
+                <b>{node.id}</b>
+                <span>
+                  {node.task} · {node.access_object || "root"} · estRows{" "}
+                  {node.est_rows}
+                </span>
+                <small>{node.operator_info}</small>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="recommendation-panel panel">
+          <div className="panel-head">
+            <h3>优化建议</h3>
+            <span className="chip success">
+              {result.recommendations.length} 条
+            </span>
+          </div>
+          {result.recommendations.map((item) => (
+            <div className="recommendation" key={item.id}>
+              <div className={"recommendation-icon " + item.severity}>
+                {item.severity === "critical" ? (
+                  <CircleAlert size={16} />
+                ) : (
+                  <WandSparkles size={16} />
+                )}
+              </div>
+              <div className="row-main">
+                <b>{item.title}</b>
+                <span>{item.rationale}</span>
+                <code>{item.action}</code>
+                {item.evidence.length > 0 && (
+                  <small>证据：{item.evidence.join(" · ")}</small>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="feature-panel panel">
+        <div className="panel-head">
+          <h3>版本画像与依据</h3>
+          <span className="chip">{result.sources.length} sources</span>
+        </div>
+        <div className="feature-list">
+          {result.version_features.map((item) => (
+            <span key={item}>{item}</span>
+          ))}
+        </div>
+        <div className="source-list">
+          {result.sources.map((source) => (
+            <a
+              href={source.url}
+              target="_blank"
+              rel="noreferrer"
+              key={source.url}
+            >
+              {source.label} · {source.ref}
+            </a>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+createRoot(document.getElementById("root")!).render(<App />);
