@@ -205,3 +205,50 @@ P0：控制面不可用、数据泄露、Executor 未授权执行；立即电话
 ## 17. 知识库部署补充
 
 本地知识库随 FastAPI 运行；允许目录由只读卷和 DATASET_ALLOWED_ROOTS 控制。生产新增 knowledge-worker、对象存储、全文索引、向量库和本地 Embedding/Reranker。监控入库队列、解析/Embedding 失败、Chunk 分布、召回延迟、无结果率、Citation Coverage 和索引版本；恢复时先还原元数据与原文，再恢复或重建索引并做 checksum 对账。
+
+## 18. 模块化部署单元
+
+| 部署单元 | 本地 Compose | 内网 Kubernetes | 资源/扩容依据 |
+|---|---|---|---|
+| Web/BFF | `web` | web + gateway | 页面请求、API P95 |
+| API 控制面 | FastAPI MVP | api 多副本 | API P95、连接池 |
+| Query/SQL Worker | API 内置 | query-worker、sql-worker | 问数并发、EXPLAIN 延迟 |
+| Knowledge Worker | 可选关闭 | parser/index/embed/rerank | 文档队列、Chunk 吞吐、GPU |
+| Scenario/Temporal | 演示内存 | temporal server/worker | 运行实例、步骤耗时 |
+| Connector/Executor | 不连接生产 | adapter、executor-gateway | 外部调用速率、动作队列 |
+| 数据底座 | PostgreSQL、Redis、MinIO | HA PostgreSQL、Redis、S3/OpenSearch/Vector | 数据量、索引、保留期 |
+
+本地环境默认只开放 Web、API、PostgreSQL、Redis、MinIO；生产 Adapter、模型 Provider 和 Executor 必须通过环境变量显式启用，默认关闭。
+
+## 19. 配置与密钥边界
+
+配置分为 `platform`、`datasource`、`model`、`connector`、`policy`、`observability` 六类。配置文件只存引用和非敏感参数；密钥、数据库密码、模型 Token 和机器凭证存 Vault/OpenBao，通过短期租约注入。前端只显示 Provider 名称、能力和健康，不回显密钥。
+
+关键环境变量：`API_BASE_URL`、`DATABASE_URL`、`REDIS_URL`、`S3_ENDPOINT`、`DATASET_ALLOWED_ROOTS`、`MODEL_GATEWAY_URL`、`MODEL_LOCAL_ONLY`、`EXECUTOR_ENABLED`、`CORS_ALLOW_LOCALHOST`、`CORS_ALLOW_ORIGINS`、`OTEL_EXPORTER_OTLP_ENDPOINT`。生产启动前执行配置 Schema 校验，缺少安全边界直接阻断。
+
+本地版本默认 `CORS_ALLOW_LOCALHOST=true`，支持 localhost/127.0.0.1 动态开发端口。预生产和生产必须设置为 `false`，并在 `CORS_ALLOW_ORIGINS` 中列出网关实际 HTTPS Origin；不得使用 `*` 与凭证模式组合。变更 Origin 后需要执行 OPTIONS 预检和登录、问数、功能目录三条浏览器回归。
+
+## 20. 发布、回滚和数据保护
+
+发布顺序：数据库向前兼容迁移 → API → Worker → Web → Connector/Executor。产品目录和策略先在测试租户发布，完成契约测试后灰度。回滚只回滚镜像和配置，不回滚已写入的审计；数据库迁移使用 expand/contract，索引使用版本别名。
+
+备份：PostgreSQL 每日全备 + WAL，MinIO 版本与跨节点副本，OpenSearch/Vector DB 保存快照；每月演练恢复并校验资产、知识文档、审批和审计数量。目标基线：控制面 RPO ≤15 分钟、RTO ≤60 分钟；索引可重建但原文不可丢失。
+
+## 21. 按模块的运行手册
+
+| 模块 | 关键健康指标 | 降级策略 | 禁止动作 |
+|---|---|---|---|
+| 智能问数 | SQL P95、拦截率、模型延迟、空结果率 | 只读指标目录/历史结果 | 模型故障时切公网 |
+| 知识库 | 入库队列、索引失败、Recall、Citation Coverage | 词法检索/人工查询 | 无 ACL 召回 |
+| 数据治理 | 元数据采集延迟、血缘失败、质量规则延迟 | 保留最近快照 | 直接覆盖资产事实 |
+| AIOps | 告警延迟、RCA 证据覆盖、事件堆积 | 规则 RCA、人工接管 | 状态不明自动重试 |
+| SQL 优化 | 版本画像加载、分析耗时、真实计划错误 | 仅模拟并明确标记 | 冒充真实 EXPLAIN |
+| 场景/执行 | Workflow 失败、审批超时、动作状态不明 | 冻结动作、人工处理 | 任意 Shell、永久凭证 |
+| 平台管理 | Provider/Connector 健康、审计延迟、策略版本 | 只读模式、禁止高风险 | 绕过审批或审计 |
+
+## 22. 运维验收新增项
+
+- 功能目录接口在 200ms 内返回，过滤结果与页面功能数量一致。
+- 每个生产启用功能都有 Owner、SLO、健康检查、降级和回滚 Runbook。
+- 每个场景运行至少验证一次重复消息、Worker 重启、审批超时、执行状态不明。
+- 离线部署关闭公网 egress 后，功能目录、知识库本地检索、SQL 模拟和场景演示仍可运行。

@@ -257,3 +257,53 @@ Java、Python、Connector、Executor 统一 OpenTelemetry。指标包括 API 延
 ## 17. 知识库服务补充
 
 知识库 API 位于 /api/v1/knowledge-bases，覆盖创建/查询、文档文本/文件/允许目录入库与引用问答。backend/app/knowledge_base.py 实现内存领域模型、段落感知切分、中文/英文词法召回和确定性引用回答；backend/app/main.py 负责 HTTP、HTML 清洗和文件安全。生产迁移到持久化异步 IndexJob，使用 checksum 加 parser/splitter/embedding version 幂等，召回前强制 ACL。
+
+## 18. 产品能力目录服务
+
+产品目录是产品、前端、后端和测试的共享契约，当前实现位于 `backend/app/product_catalog.py`。
+
+| 方法 | 路径 | 参数 | 返回 | 规则 |
+|---|---|---|---|---|
+| GET | `/api/v1/product/modules` | `role/state/search` | 模块及过滤后的功能 | 只返回已授权范围；state 仅允许 available/demo/planned |
+| GET | `/api/v1/product/features/{id}` | 功能 ID | 单个功能完整契约 | 不存在返回 404 |
+
+`ProductFeature` 必须包含 `id/name/summary/roles/delivery_state/target_page/action_label/inputs/outputs/guardrails/scenario_ids/api_refs`。新增功能若缺少输入、输出或门禁，不能合并。
+
+## 19. 后端领域分层与 API 契约
+
+```text
+HTTP Router
+  → AuthContext / TenantScope
+  → Application Command/Query
+  → Domain Service / Policy
+  → Port (Repository / Connector / Model / Executor)
+  → Outbox Event / Audit
+```
+
+模块化单体阶段按包隔离：`product_catalog`、`query`、`knowledge`、`governance`、`aiops`、`sql_optimizer`、`scenario`、`approval`、`platform`。每个包禁止直接引用其他包的内存字典；跨边界通过接口或事件。迁移 PostgreSQL 后领域模型保持 API 字段不变。
+
+统一错误：`{error_code,message,trace_id,retryable,details}`。鉴权失败 401/403，资源不存在 404，状态冲突 409，参数 422，外部依赖 502/504，配额 429。所有写操作返回审计 ID；异步操作返回 operation/run ID。
+
+跨域策略属于部署安全配置：本地开发可通过 `CORS_ALLOW_LOCALHOST=true` 接受 localhost/127.0.0.1 动态端口；生产必须关闭该开关并使用 `CORS_ALLOW_ORIGINS` 精确列出 HTTPS 来源。服务不得根据请求 Origin 自动回显未知来源，也不得以 `*` 配合 Cookie/Authorization 凭证。
+
+## 20. 生产 API 分组
+
+| 分组 | 主要资源 | 关键写入门禁 |
+|---|---|---|
+| product | modules、features | 目录发布需版本和校验 |
+| query | conversations、operations、datasets | 只读 SQL、AST、扫描上限 |
+| knowledge | bases、documents、chunks、queries、feedback | ACL、文件扫描、引用校验 |
+| governance | assets、schemas、lineage、quality、sql-assets | 资产权限、来源可信度 |
+| aiops | incidents、evidence、rca、health | 只读观测、时间窗、脱敏 |
+| sql-optimizer | versions、inputs、analysis、advice | 版本握手、EXPLAIN 只读 |
+| scenarios | templates、runs、steps、approvals | 服务端状态机、审批、幂等 |
+| platform | datasources、providers、connectors、policies、audit | 密钥引用、最小权限、双人复核 |
+
+## 21. 实现顺序与迁移
+
+1. 当前：产品目录 API、内存领域模型、确定性演示数据和契约测试。
+2. Sprint 1：目录/场景/知识库/资产迁移 PostgreSQL，新增 tenant/workspace/ACL 字段。
+3. Sprint 2：Outbox + Worker + MinIO/OpenSearch，所有异步操作可恢复。
+4. Sprint 3：Model Gateway、TiDB MCP、观测和调度 Connector SPI。
+5. Sprint 4：OPA + Executor Gateway + Temporal，开放低风险 Runbook。
+6. Sprint 5：评测、压测、离线包、备份恢复和生产灰度。

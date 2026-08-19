@@ -427,3 +427,63 @@ MVP 后优先按真实瓶颈演进：Query/AIOps 独立扩容；引入 CDC 更�
 ## 16. 知识库与 RAG 子系统补充
 
 知识库采用 Loader → Parser → Splitter → Indexer → Hybrid Retriever → ACL Filter → Reranker → Answer Composer → Citation Validator 管线。MVP 使用内存和词法检索；生产使用 PostgreSQL、MinIO、OpenSearch 与 pgvector/Qdrant/Milvus。Embedding、Rerank 和 Chat 通过 Model Gateway 适配云模型与自建模型；权限在召回前下推，回答保存引用和审计。详见《知识库模块产品与研发设计方案》。
+
+## 17. v2 模块化运行架构
+
+产品目录中的模块不是简单菜单，而是 8 个边界上下文。起步阶段采用模块化单体 + Python Worker；达到容量或团队边界后，按下表拆分部署单元。
+
+| 模块 | 领域服务 | 主要存储 | 异步任务/事件 | 外部依赖 |
+|---|---|---|---|---|
+| 智能问数 | Query Service、Semantic Registry、Query Proxy | PostgreSQL、Redis、Query Audit | `query.requested`、`query.completed` | TiDB MCP、Model Gateway、ECharts |
+| 企业知识库 | Knowledge API、Index Worker、Retriever | PostgreSQL、MinIO、OpenSearch、Vector DB | `document.ingest`、`index.ready` | Loader、Embedding、Reranker |
+| 数据资产治理 | Metadata Service、Lineage Worker、Quality Service | PostgreSQL、OpenSearch、对象存储 | `asset.changed`、`lineage.updated` | TiDB、OpenLineage、DataHub/OpenMetadata |
+| AIOps | Event Service、Evidence Worker、RCA Service | PostgreSQL、OpenSearch、时序库 | `incident.opened`、`evidence.collected` | Prometheus、Loki、Tempo、调度 |
+| SQL 优化 | SQL Advisor、TiDB Profile Registry | PostgreSQL、Redis | `sql.analysis.requested` | TiDB EXPLAIN、版本源码/规则 |
+| 场景指挥 | Scenario Orchestrator、Agent Runtime | PostgreSQL、Temporal、对象存储 | `scenario.started`、`step.waiting_approval` | Connector SPI、知识库 Retriever |
+| 任务审批执行 | Policy Service、Approval、Executor Gateway | PostgreSQL、OPA、审计存储 | `approval.requested`、`execution.finished` | Vault/OpenBao、Rundeck/StackStorm |
+| 平台管理 | IAM、Model Gateway、Connector Registry、Audit | PostgreSQL、Redis、Vault | `policy.published`、`provider.health_changed` | OIDC、各类 Provider |
+
+```mermaid
+flowchart LR
+  B[浏览器] --> G[API Gateway / BFF]
+  G --> IAM[IAM + Policy]
+  G --> Q[Query Service]
+  G --> K[Knowledge Service]
+  G --> A[Asset + Lineage]
+  G --> O[AIOps + SQL Advisor]
+  G --> S[Scenario Orchestrator]
+  S --> T[Temporal / Agent Runtime]
+  T --> E[Executor Gateway]
+  E --> X[Runbook / Adapter]
+  Q --> M[Model Gateway]
+  K --> M
+  O --> M
+  Q --> D[(TiDB / Data Sources)]
+  K --> V[(OpenSearch + Vector DB)]
+  A --> P[(PostgreSQL Metadata)]
+  O --> OBS[(Prometheus / Loki / Tempo)]
+  S --> AUD[(Audit + Evidence)]
+```
+
+### 17.1 请求和状态边界
+
+- 同步读接口只负责鉴权、参数校验和读取聚合视图；外部调用、索引、RCA、Agent 和执行全部返回 `202 + operation_id/run_id`。
+- Gateway 生成 `trace_id`，下游使用 `tenant_id/workspace_id/resource_id` 作为强制过滤键；任何服务不得只依赖前端传入权限。
+- 事件使用 CloudEvents 风格信封：`id/type/source/time/tenant/data/schema_version`；消费者按 `event_id` 幂等。
+- Workflow 状态由 Temporal 持久化；副作用动作通过 Executor Gateway 的 `idempotency_key` 和目标状态探测避免重复执行。
+- 证据分为 `source_snapshot`、`tool_result`、`model_summary`、`human_decision`、`verification`，模型摘要不能覆盖原始证据。
+
+### 17.2 数据所有权与一致性
+
+领域服务只写自己的表；跨模块通过领域事件或只读投影访问。资产、Incident、任务和知识文档使用稳定全局 ID。删除采用软删除 + 索引异步清理；索引策略更新使用新版本别名原子切换。跨库事务不使用分布式锁，采用 Outbox + 重试 + 对账任务。
+
+### 17.3 生产部署分层
+
+| 环境 | 部署 | 允许能力 | 数据策略 |
+|---|---|---|---|
+| 本地演示 | Docker Compose | 演示数据、模拟计划、确定性场景 | 内存/本地卷，禁止生产凭证 |
+| 内网测试 | Kubernetes 单集群 | 只读真实 Adapter、模型评测、dry-run | 测试租户、脱敏数据、全量审计 |
+| 生产 | Kubernetes 多可用区 | 低风险 Runbook + 人工审批高风险 | PostgreSQL HA、对象存储、索引备份、短期凭证 |
+| 完全离线 | 离线镜像包 + 私有 Registry | 本地模型、内网连接器、离线评测 | 禁止公网 egress，包与模型验签 |
+
+容量初始基线：API 2 副本、Worker 2 副本、PostgreSQL 3 节点、Redis 3 节点、OpenSearch 3 节点；根据问数并发、文档 Chunk、告警速率和 Agent 步数分别扩容，不做整个平台同步扩容。

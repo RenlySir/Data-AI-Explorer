@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import * as echarts from "echarts";
+import type { EChartsOption } from "echarts";
 import {
   LayoutDashboard,
   MessageSquare,
@@ -43,9 +43,11 @@ import "./styles.css";
 import "./optimizer.css";
 import "./scenarios.css";
 import "./knowledge.css";
+import "./capabilities.css";
 
 type Page =
   | "workbench"
+  | "capabilities"
   | "query"
   | "incidents"
   | "assets"
@@ -81,7 +83,7 @@ type QueryResult = {
   columns: string[];
   rows: unknown[][];
   evidence: { type: string; label: string; ref: string }[];
-  chart?: { option?: echarts.EChartsOption; type: string; title: string };
+  chart?: { option?: EChartsOption; type: string; title: string };
   created_at: string;
 };
 type Dataset = {
@@ -230,6 +232,28 @@ type KnowledgeFeedback = {
   helpful: boolean;
   comment: string;
 };
+type ProductFeature = {
+  id: string;
+  name: string;
+  summary: string;
+  roles: string[];
+  delivery_state: "available" | "demo" | "planned";
+  target_page?: Page;
+  action_label: string;
+  inputs: string[];
+  outputs: string[];
+  guardrails: string[];
+  scenario_ids: string[];
+  api_refs: string[];
+};
+type ProductModule = {
+  id: string;
+  name: string;
+  domain: "data" | "operations" | "collaboration" | "platform";
+  summary: string;
+  owner_role: string;
+  features: ProductFeature[];
+};
 const API_BASE = (
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api/v1"
 ).replace(/\/$/, "");
@@ -323,6 +347,7 @@ function App() {
   const [catalogLoading, setCatalogLoading] = useState(false);
   const nav = [
     ["workbench", "工作台", LayoutDashboard],
+    ["capabilities", "功能中心", ListChecks],
     ["query", "智能问数", MessageSquare],
     ["knowledge", "知识库", BookOpen],
     ["assets", "数据资产", Database],
@@ -413,6 +438,7 @@ function App() {
           </div>
         )}
         {page === "workbench" && <Workbench setPage={setPage} />}{" "}
+        {page === "capabilities" && <CapabilityCenter setPage={setPage} />}{" "}
         {page === "query" && (
           <QueryV2 catalog={catalog} loadCatalog={loadCatalog} />
         )}{" "}
@@ -432,6 +458,283 @@ function App() {
     </div>
   );
 }
+function CapabilityCenter({ setPage }: { setPage: (page: Page) => void }) {
+  const [modules, setModules] = useState<ProductModule[]>([]);
+  const [selectedModuleId, setSelectedModuleId] = useState("");
+  const [selectedFeatureId, setSelectedFeatureId] = useState("");
+  const [search, setSearch] = useState("");
+  const [role, setRole] = useState("all");
+  const [state, setState] = useState<"all" | ProductFeature["delivery_state"]>(
+    "all",
+  );
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api<ProductModule[]>("/product/modules")
+      .then((items) => {
+        setModules(items);
+        setSelectedModuleId(items[0]?.id || "");
+        setSelectedFeatureId(items[0]?.features[0]?.id || "");
+      })
+      .catch((reason) =>
+        setError(reason instanceof Error ? reason.message : "功能目录加载失败"),
+      );
+  }, []);
+
+  const roles = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          modules.flatMap((module) =>
+            module.features.flatMap((item) => item.roles),
+          ),
+        ),
+      ).sort((left, right) => left.localeCompare(right, "zh-CN")),
+    [modules],
+  );
+  const visibleModules = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    return modules
+      .map((module) => ({
+        ...module,
+        features: module.features.filter(
+          (item) =>
+            (role === "all" || item.roles.includes(role)) &&
+            (state === "all" || item.delivery_state === state) &&
+            (!keyword ||
+              `${module.name} ${item.name} ${item.summary} ${item.roles.join(" ")}`
+                .toLowerCase()
+                .includes(keyword)),
+        ),
+      }))
+      .filter((module) => module.features.length > 0);
+  }, [modules, role, search, state]);
+  const selectedModule =
+    visibleModules.find((module) => module.id === selectedModuleId) ||
+    visibleModules[0];
+  const selectedFeature =
+    selectedModule?.features.find((item) => item.id === selectedFeatureId) ||
+    selectedModule?.features[0];
+  const counts = modules
+    .flatMap((module) => module.features)
+    .reduce(
+      (result, item) => {
+        result[item.delivery_state] += 1;
+        return result;
+      },
+      { available: 0, demo: 0, planned: 0 },
+    );
+  const stateLabel = {
+    available: "可使用",
+    demo: "演示闭环",
+    planned: "待生产接入",
+  } as const;
+
+  return (
+    <section className="content capability-page">
+      <div className="section-head">
+        <div>
+          <span className="eyebrow">模块 · 功能 · 角色 · 交付状态</span>
+          <h1>功能中心</h1>
+          <p className="section-subtitle">
+            按当前职责选择可执行功能，已接入页面可直接进入。
+          </p>
+        </div>
+        <span className="chip success">{modules.length} 个模块</span>
+      </div>
+      <div className="capability-summary">
+        <Metric
+          label="可直接使用"
+          value={String(counts.available)}
+          hint="接口与页面已联通"
+          tone="green"
+        />
+        <Metric
+          label="演示闭环"
+          value={String(counts.demo)}
+          hint="等待真实 Adapter"
+          tone="blue"
+        />
+        <Metric
+          label="生产接入"
+          value={String(counts.planned)}
+          hint="按架构计划实施"
+          tone="red"
+        />
+      </div>
+      <div className="capability-toolbar">
+        <div className="capability-search">
+          <Search size={17} />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="搜索功能、场景或角色"
+            aria-label="搜索功能"
+          />
+        </div>
+        <select
+          value={role}
+          onChange={(event) => setRole(event.target.value)}
+          aria-label="按角色筛选"
+        >
+          <option value="all">全部角色</option>
+          {roles.map((item) => (
+            <option value={item} key={item}>
+              {item}
+            </option>
+          ))}
+        </select>
+        <select
+          value={state}
+          onChange={(event) =>
+            setState(
+              event.target.value as
+                | "all"
+                | ProductFeature["delivery_state"],
+            )
+          }
+          aria-label="按交付状态筛选"
+        >
+          <option value="all">全部状态</option>
+          <option value="available">可使用</option>
+          <option value="demo">演示闭环</option>
+          <option value="planned">待生产接入</option>
+        </select>
+      </div>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="capability-layout">
+        <div className="panel capability-modules">
+          <div className="panel-head">
+            <h3>产品模块</h3>
+            <span className="chip">{visibleModules.length}</span>
+          </div>
+          {visibleModules.map((module) => (
+            <button
+              key={module.id}
+              className={
+                selectedModule?.id === module.id
+                  ? "capability-module active"
+                  : "capability-module"
+              }
+              onClick={() => {
+                setSelectedModuleId(module.id);
+                setSelectedFeatureId(module.features[0]?.id || "");
+              }}
+            >
+              <span>
+                <b>{module.name}</b>
+                <small>{module.owner_role}</small>
+              </span>
+              <strong>{module.features.length}</strong>
+            </button>
+          ))}
+          {!visibleModules.length && <div className="empty">没有匹配功能</div>}
+        </div>
+        <div className="panel capability-features">
+          <div className="panel-head">
+            <div>
+              <h3>{selectedModule?.name || "具体功能"}</h3>
+              <span className="panel-help">{selectedModule?.summary}</span>
+            </div>
+          </div>
+          {selectedModule?.features.map((item) => (
+            <button
+              key={item.id}
+              className={
+                selectedFeature?.id === item.id
+                  ? "capability-feature active"
+                  : "capability-feature"
+              }
+              onClick={() => setSelectedFeatureId(item.id)}
+            >
+              <span>
+                <b>{item.name}</b>
+                <small>{item.summary}</small>
+              </span>
+              <span className={`capability-state ${item.delivery_state}`}>
+                {stateLabel[item.delivery_state]}
+              </span>
+              <ChevronRight size={16} />
+            </button>
+          ))}
+        </div>
+        <div className="panel capability-detail">
+          {selectedFeature ? (
+            <>
+              <div className="capability-detail-head">
+                <span className="task-icon">
+                  <ListChecks size={19} />
+                </span>
+                <div>
+                  <span className="eyebrow">{selectedFeature.id}</span>
+                  <h2>{selectedFeature.name}</h2>
+                </div>
+              </div>
+              <p>{selectedFeature.summary}</p>
+              <div className="capability-roles">
+                {selectedFeature.roles.map((item) => (
+                  <span className="chip" key={item}>
+                    {item}
+                  </span>
+                ))}
+              </div>
+              <CapabilityFact title="需要" items={selectedFeature.inputs} />
+              <CapabilityFact title="产出" items={selectedFeature.outputs} />
+              <CapabilityFact
+                title="安全门禁"
+                items={selectedFeature.guardrails}
+              />
+              {!!selectedFeature.scenario_ids.length && (
+                <CapabilityFact
+                  title="关联场景"
+                  items={selectedFeature.scenario_ids}
+                />
+              )}
+              {!!selectedFeature.api_refs.length && (
+                <div className="capability-api">
+                  <b>接口契约</b>
+                  {selectedFeature.api_refs.map((item) => (
+                    <code key={item}>{item}</code>
+                  ))}
+                </div>
+              )}
+              <button
+                className="primary capability-open"
+                disabled={
+                  selectedFeature.delivery_state === "planned" ||
+                  !selectedFeature.target_page
+                }
+                onClick={() =>
+                  selectedFeature.target_page &&
+                  setPage(selectedFeature.target_page)
+                }
+              >
+                {selectedFeature.delivery_state === "planned"
+                  ? "待生产接入"
+                  : selectedFeature.action_label}
+                <ArrowUpRight size={16} />
+              </button>
+            </>
+          ) : (
+            <div className="empty">请选择一个具体功能</div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+function CapabilityFact({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="capability-fact">
+      <b>{title}</b>
+      <div>
+        {items.map((item) => (
+          <span key={item}>{item}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
 function Workbench({ setPage }: { setPage: (p: Page) => void }) {
   const today = new Intl.DateTimeFormat("zh-CN", {
     month: "long",
@@ -446,9 +749,14 @@ function Workbench({ setPage }: { setPage: (p: Page) => void }) {
           <h1>早上好，林工</h1>
           <p>这里是今天的运营概览，所有重要事项都在这里。</p>
         </div>
-        <button className="primary" onClick={() => setPage("query")}>
-          开始问数 <MessageSquare size={16} />
-        </button>
+        <div className="welcome-actions">
+          <button className="secondary" onClick={() => setPage("capabilities")}>
+            <ListChecks size={16} /> 功能中心
+          </button>
+          <button className="primary" onClick={() => setPage("query")}>
+            开始问数 <MessageSquare size={16} />
+          </button>
+        </div>
       </div>
       <div className="metrics">
         <Metric label="待处理事件" value="2" hint="较昨日 -1" tone="red" />
@@ -747,17 +1055,24 @@ function Assets() {
     </section>
   );
 }
-function ChartView({ option }: { option?: echarts.EChartsOption }) {
+function ChartView({ option }: { option?: EChartsOption }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!ref.current || !option) return;
-    const chart = echarts.init(ref.current);
-    chart.setOption(option);
-    const resize = () => chart.resize();
-    window.addEventListener("resize", resize);
+    let disposed = false;
+    let chart:
+      | { resize: () => void; dispose: () => void; setOption: (next: EChartsOption) => void }
+      | undefined;
+    const resize = () => chart?.resize();
+    void import("./chart-runtime").then(({ createChart }) => {
+      if (disposed || !ref.current) return;
+      chart = createChart(ref.current, option);
+      window.addEventListener("resize", resize);
+    });
     return () => {
+      disposed = true;
       window.removeEventListener("resize", resize);
-      chart.dispose();
+      chart?.dispose();
     };
   }, [option]);
   return <div className="echart" ref={ref} />;

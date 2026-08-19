@@ -14,7 +14,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8080
 ```
 
-OpenAPI is available at http://localhost:8080/docs. The API is prefixed with `/api/v1`; CORS allows local frontend development origins.
+OpenAPI is available at http://localhost:8080/docs. The API is prefixed with `/api/v1`. Localhost origins and dynamic development ports are enabled by default; production deployments should set `CORS_ALLOW_LOCALHOST=false` and provide exact HTTPS origins in `CORS_ALLOW_ORIGINS`.
 
 ## Demo flow
 

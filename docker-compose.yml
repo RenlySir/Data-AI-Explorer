@@ -19,6 +19,8 @@ services:
       MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-}
       MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-}
       MODEL_GATEWAY_MODEL: ${MODEL_GATEWAY_MODEL:-}
+      CORS_ALLOW_LOCALHOST: ${CORS_ALLOW_LOCALHOST:-true}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:3000,http://localhost:5173}
     depends_on:
       postgres:
         condition: service_healthy

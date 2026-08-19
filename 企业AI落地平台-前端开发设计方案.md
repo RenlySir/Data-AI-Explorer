@@ -257,3 +257,40 @@ Playwright 最少覆盖：问题澄清、SQL 被拒绝、大结果导出、SSE �
 工作台新增四个高频任务入口，分别进入智能问数、知识库、SQL 优化和场景中心。导航顺序按“数据分析 → 运维治理 → 协同执行”组织，用户先按业务目标找到入口，再在页面内查看技术细节。每个入口均使用一个动作动词和一个结果描述，避免用户面对无上下文的模块名。
 
 前端验收新增：新用户登录后 10 秒内能找到首个任务；从工作台进入四个高频任务均无需手动拼接 ID；移动宽度下入口为单列且文字不截断；知识库四个 Tab 的主操作互不冲突。
+
+## 22. 功能中心与能力目录页面
+
+功能中心是所有模块的可操作索引，接口为 `GET /api/v1/product/modules`。页面由四块组成：
+
+1. 顶部状态摘要：可使用、演示闭环、待生产接入数量。
+2. 筛选条：功能关键词、角色下拉、交付状态下拉；筛选在前端快速响应，服务端同样支持参数过滤。
+3. 模块列表：展示模块 Owner 和当前筛选后的功能数量。
+4. 功能列表 + 详情区：功能行展示摘要、状态和角色；详情展示输入、产出、安全门禁、关联场景、API 契约和唯一操作按钮。
+
+功能中心不复制各业务页面的复杂表单。`available`/`demo` 功能按钮直接调用 `setPage(target_page)`；`planned` 功能禁用按钮并显示生产接入边界。前端类型必须与 `ProductModule/ProductFeature` OpenAPI Schema 对齐。
+
+## 23. 页面与功能 ID 映射
+
+| 页面 | 主要功能 ID | 页面主操作 |
+|---|---|---|
+| 工作台 | admin-health、task-queue | 查看待办/进入高频任务 |
+| 功能中心 | 全部产品目录 | 按角色找到功能并进入 |
+| 智能问数 | query-semantic、query-text2sql、query-bi | 生成并执行 |
+| 知识库 | knowledge-qa、knowledge-ingest、knowledge-retrieval | 检索并回答 |
+| 数据资产 | governance-catalog、query-file、query-directory | 浏览资产/上传分析 |
+| TiDB 结构 | query-tidb-mcp、governance-schema、governance-lineage | 采集结构 |
+| AIOps 事件 | aiops-event-center、aiops-evidence、aiops-rca | 开始分析 |
+| SQL 优化 | sql-version-profile、sql-simulate、sql-advice | 开始优化 |
+| 场景中心 | 12 个 scenario-*、task-* | 启动/推进/审批 |
+
+## 24. 前端状态和交互契约
+
+所有功能页面至少实现：首次加载 Skeleton、空数据、无权限、连接中断、超时、部分成功、失败重试、只读降级、成功结果和审计入口。异步按钮绑定独立 `busy` key；禁止用一个全局 loading 阻塞整页。
+
+导航跳转携带 `source_page/source_feature_id`；返回时恢复筛选和选中对象。列表按钮使用稳定 aria-label；表单错误绑定字段并显示服务端 `error_code/trace_id`；SSE 断线采用 Last-Event-ID 恢复，离开页面释放连接。
+
+响应式要求：1280px 功能中心三栏；900px 模块/功能两栏、详情下移；700px 单列；390px 筛选器竖排、功能状态不截断、页面 body 不横向溢出。
+
+## 25. 前端包体与图表按需加载
+
+智能问数当前只渲染折线图和表格，因此前端仅在图表实际出现时动态加载 `echarts/core`，并按需注册 `LineChart`、`GridComponent`、`TooltipComponent` 和 `CanvasRenderer`，不把完整 ECharts 集合放入首屏包。新增图表类型必须同步注册对应 Chart/Component，并在构建门禁中检查首屏包体，避免功能扩展导致无感知的首屏膨胀。

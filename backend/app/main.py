@@ -17,6 +17,13 @@ from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from app.product_catalog import (
+    PRODUCT_FEATURES,
+    DeliveryState,
+    ProductFeature,
+    ProductModule,
+    list_modules,
+)
 from app.sql_optimizer import (
     ALLOWED_SQL_SUFFIXES,
     MAX_INPUT_BYTES,
@@ -203,7 +210,20 @@ KNOWLEDGE_ALLOWED_SUFFIXES = {".txt", ".md", ".markdown", ".html", ".htm", ".jso
 KNOWLEDGE_MAX_FILE_BYTES = 4 * 1024 * 1024
 
 app = FastAPI(title="Data AI Explorer API", version="0.2.0", description="企业 AI 落地平台的智能问数和数据目录 API")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://localhost:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+CORS_ALLOW_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
+    if origin.strip()
+]
+CORS_ALLOW_LOCALHOST = os.getenv("CORS_ALLOW_LOCALHOST", "true").lower() in {"1", "true", "yes"}
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ALLOW_ORIGINS,
+    allow_origin_regex=r"^https?://(?:localhost|127\.0\.0\.1)(?::\d+)?$" if CORS_ALLOW_LOCALHOST else None,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def chart_spec(columns: list[str], rows: list[list[Any]], title: str) -> dict[str, Any]:
@@ -834,6 +854,23 @@ async def optimize_tidb_sql(payload: SQLOptimizeRequest) -> SQLOptimizeResponse:
         raise
     except Exception as exc:
         raise HTTPException(502, f"TiDB live optimization failed: {exc.__class__.__name__}") from exc
+
+
+@app.get("/api/v1/product/modules", response_model=list[ProductModule], tags=["product"])
+def get_product_modules(
+    role: str | None = Query(None),
+    state: DeliveryState | None = Query(None),
+    search: str | None = Query(None, max_length=100),
+) -> list[ProductModule]:
+    return list_modules(role=role, state=state, search=search)
+
+
+@app.get("/api/v1/product/features/{feature_id}", response_model=ProductFeature, tags=["product"])
+def get_product_feature(feature_id: str) -> ProductFeature:
+    item = PRODUCT_FEATURES.get(feature_id)
+    if not item:
+        raise HTTPException(404, "product feature not found")
+    return item
 
 
 @app.get("/api/v1/scenarios", tags=["scenarios"])
