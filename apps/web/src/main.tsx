@@ -38,12 +38,21 @@ import {
   Plus,
   Quote,
   Send,
+  Bell,
+  Building2,
+  Cable,
+  CloudCog,
+  Gauge,
+  LockKeyhole,
+  Save,
+  SlidersHorizontal,
 } from "lucide-react";
 import "./styles.css";
 import "./optimizer.css";
 import "./scenarios.css";
 import "./knowledge.css";
 import "./capabilities.css";
+import "./polish.css";
 
 type Page =
   | "workbench"
@@ -54,7 +63,24 @@ type Page =
   | "catalog"
   | "sql-optimizer"
   | "scenarios"
-  | "knowledge";
+  | "knowledge"
+  | "settings";
+const ROUTABLE_PAGES: Page[] = [
+  "workbench",
+  "capabilities",
+  "query",
+  "incidents",
+  "assets",
+  "catalog",
+  "sql-optimizer",
+  "scenarios",
+  "knowledge",
+  "settings",
+];
+function pageFromLocation(): Page {
+  const candidate = window.location.hash.replace(/^#\/?/, "") as Page;
+  return ROUTABLE_PAGES.includes(candidate) ? candidate : "workbench";
+}
 type Catalog = {
   database: string;
   source: string;
@@ -323,39 +349,101 @@ const assets = [
 function Login({ onLogin }: { onLogin: () => void }) {
   return (
     <div className="login">
-      <div className="login-card">
-        <div className="brand-mark">A</div>
-        <h1>Aegis AI</h1>
-        <p>企业智能数据与运维工作台</p>
-        <label>企业账号</label>
-        <input placeholder="name@company.com" defaultValue="admin@acme.com" />
-        <label>密码</label>
-        <input type="password" defaultValue="12345678" />
-        <button className="primary wide" onClick={onLogin}>
-          登录工作台 <ArrowUpRight size={16} />
-        </button>
-        <small>本地演示环境 · 数据不会上传外部服务</small>
+      <div className="login-shell">
+        <section className="login-brand-panel">
+          <div className="login-brand-lockup">
+            <div className="brand-mark">A</div>
+            <div>
+              <b>Aegis AI</b>
+              <span>Enterprise Control Plane</span>
+            </div>
+          </div>
+          <div className="login-brand-copy">
+            <span className="login-kicker">企业 AI 控制平面</span>
+            <h1>一个入口，协同数据、知识与运维。</h1>
+            <p>以可追溯的分析和受控的执行，让企业场景真正进入日常工作流。</p>
+          </div>
+          <div className="login-capability-list">
+            <div>
+              <MessageSquare size={18} />
+              <span><b>智能分析</b><small>自然语言问数与可解释 SQL</small></span>
+            </div>
+            <div>
+              <BookOpen size={18} />
+              <span><b>企业知识</b><small>受控检索、引用与知识治理</small></span>
+            </div>
+            <div>
+              <Activity size={18} />
+              <span><b>运维协同</b><small>事件诊断、审批与场景编排</small></span>
+            </div>
+          </div>
+          <div className="login-brand-foot">
+            <ShieldCheck size={16} /> 本地优先 · 支持完全离线部署
+          </div>
+        </section>
+        <section className="login-form-panel">
+          <form className="login-card" onSubmit={(event) => { event.preventDefault(); onLogin(); }}>
+            <div className="login-form-head">
+              <span className="login-kicker">欢迎回来</span>
+              <h2>登录工作台</h2>
+              <p>使用企业账号进入当前工作空间。</p>
+            </div>
+            <label htmlFor="login-email">企业账号</label>
+            <input id="login-email" type="email" autoComplete="username" placeholder="name@company.com" defaultValue="admin@acme.com" required />
+            <label htmlFor="login-password">密码</label>
+            <input id="login-password" type="password" autoComplete="current-password" defaultValue="12345678" required onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onLogin(); } }} />
+            <div className="login-environment">
+              <span className="status-dot" />
+              <span><b>本地演示环境</b><small>数据不会发送到外部服务</small></span>
+            </div>
+            <button className="primary wide" type="submit">
+              登录工作台 <ArrowUpRight size={16} />
+            </button>
+            <small className="login-help">登录即表示你已同意企业安全与审计策略</small>
+          </form>
+        </section>
       </div>
     </div>
   );
 }
 function App() {
   const [logged, setLogged] = useState(false);
-  const [page, setPage] = useState<Page>("workbench");
+  const [page, setPage] = useState<Page>(pageFromLocation);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [notice, setNotice] = useState("");
   const [catalogLoading, setCatalogLoading] = useState(false);
-  const nav = [
-    ["workbench", "工作台", LayoutDashboard],
-    ["capabilities", "功能中心", ListChecks],
-    ["query", "智能问数", MessageSquare],
-    ["knowledge", "知识库", BookOpen],
-    ["assets", "数据资产", Database],
-    ["catalog", "TiDB 结构", Network],
-    ["incidents", "AIOps 事件", Activity],
-    ["sql-optimizer", "SQL 优化", WandSparkles],
-    ["scenarios", "场景中心", Workflow],
-  ] as const;
+  const [focusCapabilitySearch, setFocusCapabilitySearch] = useState(false);
+  const [querySeed, setQuerySeed] = useState("");
+  type NavItem = [Page, string, React.ComponentType<{ size?: number }>];
+  type NavGroup = [string, NavItem[]];
+  const navGroups: NavGroup[] = [
+    ["总览", [["workbench", "工作台", LayoutDashboard], ["capabilities", "功能中心", ListChecks]]],
+    ["数据智能", [["query", "智能问数", MessageSquare], ["knowledge", "知识库", BookOpen], ["assets", "数据资产", Database], ["catalog", "TiDB 结构", Network]]],
+    ["运维协同", [["incidents", "AIOps 事件", Activity], ["sql-optimizer", "SQL 优化", WandSparkles], ["scenarios", "场景中心", Workflow]]],
+  ];
+  const nav = navGroups.flatMap(([, items]) => items);
+  const activeGroup = navGroups.find(([, items]) =>
+    items.some(([id]) => id === page),
+  )?.[0];
+  const pageTitle = page === "settings" ? "系统设置" : nav.find((item) => item[0] === page)?.[1];
+  const navigatePage = (next: Page) => {
+    setPage(next);
+    const nextHash = `#/${next}`;
+    if (window.location.hash !== nextHash) window.history.pushState({ page: next }, "", nextHash);
+  };
+  const openQuery = (question = "") => {
+    setQuerySeed(question);
+    navigatePage("query");
+  };
+  useEffect(() => {
+    if (!window.location.hash) window.history.replaceState({ page }, "", `#/${page}`);
+    const handleHistory = () => setPage(pageFromLocation());
+    window.addEventListener("popstate", handleHistory);
+    return () => window.removeEventListener("popstate", handleHistory);
+  }, []);
+  useEffect(() => {
+    if (page !== "capabilities") setFocusCapabilitySearch(false);
+  }, [page]);
   const loadCatalog = async (endpoint = "demo://tidb") => {
     setCatalogLoading(true);
     try {
@@ -376,33 +464,49 @@ function App() {
       <Login
         onLogin={() => {
           setLogged(true);
+          navigatePage(page);
           void loadCatalog();
         }}
       />
     );
   return (
     <div className="app">
-      <aside>
+      <aside className="app-sidebar">
         <div className="logo">
           <span>A</span>
-          <b>Aegis AI</b>
+          <div><b>Aegis AI</b><small>Control Plane</small></div>
         </div>
-        {nav.map(([id, label, Icon]) => (
-          <button
-            className={page === id ? "nav active" : "nav"}
-            aria-label={label}
-            onClick={() => setPage(id)}
-            key={id}
-          >
-            <Icon size={18} />
-            <span className="nav-label">{label}</span>
-          </button>
-        ))}
+        <div className="workspace-switch">
+          <Building2 size={17} />
+          <span><small>当前工作区</small><b>本地演示空间</b></span>
+        </div>
+        <nav className="sidebar-nav" aria-label="产品导航">
+          {navGroups.map(([group, items]) => (
+            <div className="nav-group" key={group}>
+              <span className="nav-section">{group}</span>
+              {items.map(([id, label, Icon]) => (
+                <button
+                  className={page === id ? "nav active" : "nav"}
+                  aria-label={label}
+                  aria-current={page === id ? "page" : undefined}
+                  title={label}
+                  onClick={() => id === "query" ? openQuery() : navigatePage(id)}
+                  key={id}
+                >
+                  <Icon size={18} />
+                  <span className="nav-label">{label}</span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </nav>
         <div className="aside-bottom">
           <button
-            className="nav"
+            className={page === "settings" ? "nav active" : "nav"}
             aria-label="系统设置"
-            onClick={() => setPage("catalog")}
+            aria-current={page === "settings" ? "page" : undefined}
+            title="系统设置"
+            onClick={() => navigatePage("settings")}
           >
             <Settings size={18} />
             <span className="nav-label">系统设置</span>
@@ -410,7 +514,8 @@ function App() {
           <button
             className="nav"
             aria-label="退出登录"
-            onClick={() => setLogged(false)}
+            title="退出登录"
+            onClick={() => { setLogged(false); navigatePage("workbench"); }}
           >
             <LogOut size={18} />
             <span className="nav-label">退出登录</span>
@@ -418,14 +523,22 @@ function App() {
         </div>
       </aside>
       <main>
-        <header>
-          <div>
-            <span className="eyebrow">企业智能平台</span>
-            <h2>{nav.find((n) => n[0] === page)?.[1]}</h2>
+        <header className="topbar">
+          <div className="page-context">
+            <span className="eyebrow">{activeGroup || "平台管理"}</span>
+            <h2>{pageTitle}</h2>
           </div>
-          <div className="user">
-            <span className="status-dot" />
-            生产环境 <div className="avatar">林</div>
+          <button className="global-search" onClick={() => { setFocusCapabilitySearch(true); navigatePage("capabilities"); }}>
+            <Search size={16} />
+            <span>搜索功能、场景或数据</span>
+          </button>
+          <div className="user topbar-actions">
+            <span className="environment-badge"><span className="status-dot" />本地演示</span>
+            <button className="topbar-icon" aria-label="通知" title="通知" onClick={() => setNotice("当前没有未读通知")}><Bell size={18} /></button>
+            <div className="account-chip">
+              <div className="avatar">林</div>
+              <span><b>林工</b><small>平台管理员</small></span>
+            </div>
           </div>
         </header>
         {notice && (
@@ -437,16 +550,16 @@ function App() {
             </button>
           </div>
         )}
-        {page === "workbench" && <Workbench setPage={setPage} />}{" "}
-        {page === "capabilities" && <CapabilityCenter setPage={setPage} />}{" "}
+        {page === "workbench" && <Workbench setPage={navigatePage} openQuery={openQuery} />} {" "}
+        {page === "capabilities" && <CapabilityCenter setPage={navigatePage} focusSearch={focusCapabilitySearch} />} {" "}
         {page === "query" && (
-          <QueryV2 catalog={catalog} loadCatalog={loadCatalog} />
+          <QueryV2 catalog={catalog} loadCatalog={loadCatalog} initialQuestion={querySeed} />
         )}{" "}
-        {page === "incidents" && <Incidents />}{" "}
+        {page === "incidents" && <Incidents setPage={navigatePage} />} {" "}
         {page === "scenarios" && <ScenarioCenter />}{" "}
         {page === "knowledge" && <KnowledgeBasePage />}{" "}
         {page === "sql-optimizer" && <SQLOptimizerPage />}{" "}
-        {page === "assets" && <AssetsV2 />}{" "}
+        {page === "assets" && <AssetsV2 setPage={navigatePage} />} {" "}
         {page === "catalog" && (
           <CatalogPage
             catalog={catalog}
@@ -454,11 +567,12 @@ function App() {
             loadCatalog={loadCatalog}
           />
         )}
+        {page === "settings" && <SettingsPage />}
       </main>
     </div>
   );
 }
-function CapabilityCenter({ setPage }: { setPage: (page: Page) => void }) {
+function CapabilityCenter({ setPage, focusSearch = false }: { setPage: (page: Page) => void; focusSearch?: boolean }) {
   const [modules, setModules] = useState<ProductModule[]>([]);
   const [selectedModuleId, setSelectedModuleId] = useState("");
   const [selectedFeatureId, setSelectedFeatureId] = useState("");
@@ -468,6 +582,14 @@ function CapabilityCenter({ setPage }: { setPage: (page: Page) => void }) {
     "all",
   );
   const [error, setError] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const featuresRef = useRef<HTMLDivElement>(null);
+  const detailRef = useRef<HTMLDivElement>(null);
+  const advanceOnMobile = (target: React.RefObject<HTMLDivElement | null>) => {
+    if (window.matchMedia("(max-width: 700px)").matches) {
+      window.requestAnimationFrame(() => target.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    }
+  };
 
   useEffect(() => {
     api<ProductModule[]>("/product/modules")
@@ -480,6 +602,9 @@ function CapabilityCenter({ setPage }: { setPage: (page: Page) => void }) {
         setError(reason instanceof Error ? reason.message : "功能目录加载失败"),
       );
   }, []);
+  useEffect(() => {
+    if (focusSearch) searchRef.current?.focus();
+  }, [focusSearch]);
 
   const roles = useMemo(
     () =>
@@ -566,6 +691,7 @@ function CapabilityCenter({ setPage }: { setPage: (page: Page) => void }) {
         <div className="capability-search">
           <Search size={17} />
           <input
+            ref={searchRef}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="搜索功能、场景或角色"
@@ -600,6 +726,11 @@ function CapabilityCenter({ setPage }: { setPage: (page: Page) => void }) {
           <option value="demo">演示闭环</option>
           <option value="planned">待生产接入</option>
         </select>
+        {(search || role !== "all" || state !== "all") && (
+          <button className="secondary capability-reset" onClick={() => { setSearch(""); setRole("all"); setState("all"); searchRef.current?.focus(); }}>
+            <X size={14} />清除筛选
+          </button>
+        )}
       </div>
       {error && <div className="error-banner">{error}</div>}
       <div className="capability-layout">
@@ -619,6 +750,7 @@ function CapabilityCenter({ setPage }: { setPage: (page: Page) => void }) {
               onClick={() => {
                 setSelectedModuleId(module.id);
                 setSelectedFeatureId(module.features[0]?.id || "");
+                advanceOnMobile(featuresRef);
               }}
             >
               <span>
@@ -630,7 +762,7 @@ function CapabilityCenter({ setPage }: { setPage: (page: Page) => void }) {
           ))}
           {!visibleModules.length && <div className="empty">没有匹配功能</div>}
         </div>
-        <div className="panel capability-features">
+        <div className="panel capability-features" ref={featuresRef}>
           <div className="panel-head">
             <div>
               <h3>{selectedModule?.name || "具体功能"}</h3>
@@ -645,7 +777,7 @@ function CapabilityCenter({ setPage }: { setPage: (page: Page) => void }) {
                   ? "capability-feature active"
                   : "capability-feature"
               }
-              onClick={() => setSelectedFeatureId(item.id)}
+              onClick={() => { setSelectedFeatureId(item.id); advanceOnMobile(detailRef); }}
             >
               <span>
                 <b>{item.name}</b>
@@ -658,7 +790,7 @@ function CapabilityCenter({ setPage }: { setPage: (page: Page) => void }) {
             </button>
           ))}
         </div>
-        <div className="panel capability-detail">
+        <div className="panel capability-detail" ref={detailRef}>
           {selectedFeature ? (
             <>
               <div className="capability-detail-head">
@@ -735,19 +867,24 @@ function CapabilityFact({ title, items }: { title: string; items: string[] }) {
     </div>
   );
 }
-function Workbench({ setPage }: { setPage: (p: Page) => void }) {
+function Workbench({ setPage, openQuery }: { setPage: (p: Page) => void; openQuery: (question?: string) => void }) {
   const today = new Intl.DateTimeFormat("zh-CN", {
     month: "long",
     day: "numeric",
     weekday: "long",
   }).format(new Date());
   return (
-    <section className="content">
-      <div className="welcome">
-        <div>
+    <section className="content workbench-page">
+      <div className="welcome workbench-hero">
+        <div className="welcome-copy">
           <span className="eyebrow">{today}</span>
           <h1>早上好，林工</h1>
-          <p>这里是今天的运营概览，所有重要事项都在这里。</p>
+          <p>今日重点已按风险和业务影响排序，可以从待办直接进入处置。</p>
+          <div className="hero-signals">
+            <span><span className="status-dot" /> 核心服务正常</span>
+            <span><ShieldCheck size={14} /> 只读安全策略已启用</span>
+            <span><Gauge size={14} /> 数据更新于 2 分钟前</span>
+          </div>
         </div>
         <div className="welcome-actions">
           <button className="secondary" onClick={() => setPage("capabilities")}>
@@ -779,28 +916,35 @@ function Workbench({ setPage }: { setPage: (p: Page) => void }) {
           tone="purple"
         />
       </div>
+      <div className="workbench-section-label">
+        <div><span className="eyebrow">快捷入口</span><h2>开始一项工作</h2></div>
+        <button className="text-btn" onClick={() => setPage("capabilities")}>浏览全部 60 项功能 <ChevronRight size={14} /></button>
+      </div>
       <div className="workbench-tasks" aria-label="常用工作">
         {[
-          ["query", "经营数据分析", "自然语言转 SQL 并生成图表", MessageSquare],
+          ["query", "数据分析", "经营数据分析", "自然语言转 SQL 并生成图表", MessageSquare],
           [
             "knowledge",
+            "知识检索",
             "查询企业知识",
             "从制度、手册和案例中获取有引用的回答",
             BookOpen,
           ],
           [
             "sql-optimizer",
+            "性能诊断",
             "诊断 SQL 性能",
             "按 TiDB 版本分析执行计划与索引建议",
             WandSparkles,
           ],
           [
             "scenarios",
+            "协同执行",
             "发起协同任务",
             "按模板执行巡检、报告与故障处置",
             Workflow,
           ],
-        ].map(([id, title, description, Icon]) => (
+        ].map(([id, category, title, description, Icon]) => (
           <button
             className="workbench-task"
             key={String(id)}
@@ -810,6 +954,7 @@ function Workbench({ setPage }: { setPage: (p: Page) => void }) {
               <Icon size={19} />
             </span>
             <span>
+              <span className="task-category">{String(category)}</span>
               <b>{String(title)}</b>
               <small>{String(description)}</small>
             </span>
@@ -818,9 +963,9 @@ function Workbench({ setPage }: { setPage: (p: Page) => void }) {
         ))}
       </div>
       <div className="grid-two">
-        <div className="panel">
+        <div className="panel attention-panel">
           <div className="panel-head">
-            <h3>需要关注</h3>
+            <div className="panel-title"><CircleAlert size={17} /><span><h3>需要关注</h3><small>按业务影响排序</small></span></div>
             <button className="text-btn" onClick={() => setPage("incidents")}>
               查看全部 <ChevronRight size={14} />
             </button>
@@ -840,10 +985,10 @@ function Workbench({ setPage }: { setPage: (p: Page) => void }) {
             </div>
           ))}
         </div>
-        <div className="panel">
+        <div className="panel recent-panel">
           <div className="panel-head">
-            <h3>最近问数</h3>
-            <button className="text-btn" onClick={() => setPage("query")}>
+            <div className="panel-title"><Clock3 size={17} /><span><h3>最近问数</h3><small>可继续追问或复用结果</small></span></div>
+              <button className="text-btn" onClick={() => openQuery()}>
               新建问题 <ChevronRight size={14} />
             </button>
           </div>
@@ -852,11 +997,12 @@ function Workbench({ setPage }: { setPage: (p: Page) => void }) {
             "订单取消率最高的商品品类",
             "本月新客留存率",
           ].map((x, i) => (
-            <div className="query-row" key={x}>
+            <button className="query-row query-history-button" key={x} onClick={() => openQuery(x)}>
               <MessageSquare size={15} />
               <span>{x}</span>
               <small>{i + 1} 小时前</small>
-            </div>
+              <ChevronRight size={14} />
+            </button>
           ))}
         </div>
       </div>
@@ -875,12 +1021,114 @@ function Metric({
   tone: string;
 }) {
   return (
-    <div className="metric">
-      <span>{label}</span>
+    <div className={`metric metric-${tone}`}>
+      <div className="metric-head"><span>{label}</span><i /></div>
       <strong className={tone}>{value}</strong>
       <small>{hint}</small>
     </div>
   );
+}
+
+type SettingsSection = "general" | "model" | "connectors" | "security";
+
+function SettingsPage() {
+  const [section, setSection] = useState<SettingsSection>("general");
+  const [feedback, setFeedback] = useState("");
+  const sections = [
+    ["general", "基础设置", SlidersHorizontal],
+    ["model", "模型网关", CloudCog],
+    ["connectors", "数据连接", Cable],
+    ["security", "安全策略", LockKeyhole],
+  ] as const;
+  const complete = (message: string) => setFeedback(message);
+  return (
+    <section className="content settings-page">
+      <div className="section-head">
+        <div>
+          <span className="eyebrow">工作空间 · 模型 · 连接 · 安全</span>
+          <h1>系统设置</h1>
+          <p className="section-subtitle">管理当前工作空间的基础配置和本地集成边界。</p>
+        </div>
+        <span className="environment-badge"><span className="status-dot" />本地演示</span>
+      </div>
+      {feedback && (
+        <div className="notice settings-notice">
+          <CheckCircle2 size={15} />{feedback}
+          <button onClick={() => setFeedback("")} aria-label="关闭提示"><X size={14} /></button>
+        </div>
+      )}
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label="设置分类">
+          {sections.map(([id, label, Icon]) => (
+            <button key={id} className={section === id ? "active" : ""} onClick={() => { setSection(id); setFeedback(""); }}>
+              <Icon size={17} /><span>{label}</span><ChevronRight size={15} />
+            </button>
+          ))}
+        </nav>
+        <div className="panel settings-panel">
+          {section === "general" && (
+            <>
+              <SettingsHeader title="基础设置" description="工作空间名称、语言和时间展示规则。" />
+              <div className="settings-form-grid">
+                <SettingsField label="工作空间名称"><input defaultValue="本地演示空间" /></SettingsField>
+                <SettingsField label="默认语言"><select defaultValue="zh-CN"><option value="zh-CN">简体中文</option><option value="en-US">English</option></select></SettingsField>
+                <SettingsField label="时区"><select defaultValue="Asia/Shanghai"><option>Asia/Shanghai</option><option>UTC</option></select></SettingsField>
+                <SettingsField label="数据保留期"><select defaultValue="90"><option value="30">30 天</option><option value="90">90 天</option><option value="180">180 天</option></select></SettingsField>
+              </div>
+              <SettingsSave onClick={() => complete("基础设置已保存在当前会话")} />
+            </>
+          )}
+          {section === "model" && (
+            <>
+              <SettingsHeader title="模型网关" description="统一接入 OpenAI-Compatible、Ollama、vLLM 和企业自建模型。" />
+              <div className="settings-form-grid">
+                <SettingsField label="网关地址" wide><input defaultValue="http://host.docker.internal:11434" /></SettingsField>
+                <SettingsField label="默认模型"><input placeholder="例如 qwen2.5:14b" /></SettingsField>
+                <SettingsField label="调用策略"><select defaultValue="local"><option value="local">仅本地模型</option><option value="policy">按数据策略路由</option></select></SettingsField>
+              </div>
+              <div className="settings-security-note"><ShieldCheck size={16} /><span><b>凭证安全</b><small>API Key 仅保存凭证引用，页面不会回显密钥。</small></span></div>
+              <div className="settings-actions"><button className="secondary" onClick={() => complete("模型网关连通性检查通过")}>测试连接</button><SettingsSave onClick={() => complete("模型网关配置已保存在当前会话")} /></div>
+            </>
+          )}
+          {section === "connectors" && (
+            <>
+              <SettingsHeader title="数据连接" description="配置 TiDB MCP 与本地受控目录，连接默认只读。" />
+              <div className="settings-form-grid">
+                <SettingsField label="TiDB MCP Endpoint" wide><input defaultValue="demo://tidb" /></SettingsField>
+                <SettingsField label="允许读取的目录" wide><input defaultValue="/workspace/data" /></SettingsField>
+              </div>
+              <div className="connector-health-row"><span><span className="status-dot" />TiDB MCP</span><b>已连接</b><small>2 个 Schema</small></div>
+              <SettingsSave onClick={() => complete("数据连接配置已保存在当前会话")} />
+            </>
+          )}
+          {section === "security" && (
+            <>
+              <SettingsHeader title="安全策略" description="本地演示默认启用只读查询、操作审计和目录白名单。" />
+              <div className="settings-toggle-list">
+                <label><span><b>只读 SQL</b><small>阻止 INSERT、UPDATE、DELETE 与 DDL</small></span><input type="checkbox" defaultChecked /></label>
+                <label><span><b>操作审计</b><small>记录人员、输入、策略结果和追踪 ID</small></span><input type="checkbox" defaultChecked /></label>
+                <label><span><b>高风险操作审批</b><small>执行前等待具有权限的审批人确认</small></span><input type="checkbox" defaultChecked /></label>
+                <label><span><b>仅允许本地模型</b><small>禁止数据发送至公网模型服务</small></span><input type="checkbox" /></label>
+              </div>
+              <SettingsSave onClick={() => complete("安全策略已保存在当前会话")} />
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SettingsHeader({ title, description }: { title: string; description: string }) {
+  return <div className="settings-panel-head"><span className="eyebrow">当前工作空间</span><h2>{title}</h2><p>{description}</p></div>;
+}
+
+function SettingsField({ label, wide = false, children }: { label: string; wide?: boolean; children: React.ReactNode }) {
+  return <label className={wide ? "settings-field wide-field" : "settings-field"}><span>{label}</span>{children}</label>;
+}
+
+function SettingsSave({ onClick }: { onClick: () => void }) {
+  return <button className="primary settings-save" onClick={onClick}><Save size={16} />保存设置</button>;
 }
 function Query({
   query,
@@ -964,50 +1212,55 @@ function Query({
     </section>
   );
 }
-function Incidents() {
+function Incidents({ setPage }: { setPage: (page: Page) => void }) {
+  const [filter, setFilter] = useState("全部");
+  const [selectedId, setSelectedId] = useState("");
+  const [message, setMessage] = useState("");
+  const visibleIncidents = incidents.filter((item) => filter === "全部" || item.status === filter);
+  const selectedIncident = incidents.find((item) => item.id === selectedId);
   return (
-    <section className="content">
+    <section className="content incident-page">
       <div className="section-head">
         <div>
           <span className="eyebrow">实时监控 · 过去 24 小时</span>
           <h1>事件中心</h1>
         </div>
-        <button className="secondary">
+        <button className="secondary" onClick={() => setMessage("当前事件已全部标记为已读")}>
           <CheckCircle2 size={16} />
           标记已读
         </button>
       </div>
+      {message && <div className="notice inline-notice"><CheckCircle2 size={15} />{message}<button onClick={() => setMessage("")} aria-label="关闭提示"><X size={14} /></button></div>}
       <div className="filters">
-        <button className="filter active">
-          全部 <b>3</b>
-        </button>
-        <button className="filter">
-          待处理 <b>1</b>
-        </button>
-        <button className="filter">
-          处理中 <b>1</b>
-        </button>
-        <button className="filter">
-          已恢复 <b>1</b>
-        </button>
-      </div>
-      <div className="panel incident-list">
-        {incidents.map((i) => (
-          <div className="incident" key={i.id}>
-            <div className={"severity " + i.severity.toLowerCase()}>
-              {i.severity}
-            </div>
-            <div className="row-main">
-              <b>{i.title}</b>
-              <span>
-                {i.id} · {i.service}
-              </span>
-            </div>
-            <span className="chip">{i.status}</span>
-            <small>{i.time}</small>
-            <ChevronRight size={17} />
-          </div>
+        {["全部", "待处理", "处理中", "已恢复"].map((item) => (
+          <button className={filter === item ? "filter active" : "filter"} onClick={() => { setFilter(item); setSelectedId(""); }} key={item}>
+            {item} <b>{item === "全部" ? incidents.length : incidents.filter((incident) => incident.status === item).length}</b>
+          </button>
         ))}
+      </div>
+      <div className="incident-layout">
+        <div className="panel incident-list">
+          {visibleIncidents.map((i) => (
+            <button className={selectedId === i.id ? "incident incident-button selected" : "incident incident-button"} key={i.id} onClick={() => setSelectedId(i.id)}>
+              <div className={"severity " + i.severity.toLowerCase()}>{i.severity}</div>
+              <div className="row-main"><b>{i.title}</b><span>{i.id} · {i.service}</span></div>
+              <span className="chip">{i.status}</span>
+              <small>{i.time}</small>
+              <ChevronRight size={17} />
+            </button>
+          ))}
+          {!visibleIncidents.length && <div className="empty">当前筛选下没有事件</div>}
+        </div>
+        {selectedIncident && (
+          <div className="panel incident-detail" aria-label="事件详情">
+            <div className="incident-detail-head"><div className={"severity " + selectedIncident.severity.toLowerCase()}>{selectedIncident.severity}</div><button className="icon-button" onClick={() => setSelectedId("")} aria-label="关闭详情"><X size={16} /></button></div>
+            <span className="eyebrow">{selectedIncident.id}</span>
+            <h2>{selectedIncident.title}</h2>
+            <p>{selectedIncident.service} 在 {selectedIncident.time} 触发异常，需要结合监控证据完成影响确认和根因分析。</p>
+            <div className="incident-facts"><span><b>当前状态</b>{selectedIncident.status}</span><span><b>建议动作</b>先分析证据，再决定是否执行 Runbook</span></div>
+            <div className="incident-detail-actions"><button className="secondary" onClick={() => setMessage("已领取事件，状态进入处理中")}>领取事件</button><button className="primary" onClick={() => setPage("scenarios")}><Workflow size={15} />启动作战室</button></div>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -1080,15 +1333,20 @@ function ChartView({ option }: { option?: EChartsOption }) {
 function QueryV2({
   catalog,
   loadCatalog,
+  initialQuestion = "",
 }: {
   catalog: Catalog | null;
   loadCatalog: (endpoint?: string) => Promise<void>;
+  initialQuestion?: string;
 }) {
-  const [question, setQuestion] = useState("");
+  const [question, setQuestion] = useState(initialQuestion);
   const [endpoint, setEndpoint] = useState("demo://tidb");
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError] = useState("");
+  useEffect(() => {
+    if (initialQuestion) setQuestion(initialQuestion);
+  }, [initialQuestion]);
   const run = async () => {
     if (!question.trim()) return;
     setRunning(true);
@@ -1146,13 +1404,20 @@ function QueryV2({
       </div>
       <div className="query-box">
         <textarea
+          autoFocus
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+              event.preventDefault();
+              void run();
+            }
+          }}
           placeholder="例如：近 30 天各区域 GMV 趋势如何？"
         />
         <div className="query-actions">
           <span>只读 SQL · 权限检查 · 结果可追溯</span>
-          <button className="primary" onClick={run} disabled={running}>
+          <button className="primary" onClick={run} disabled={running || !question.trim()}>
             {running ? (
               <>
                 <Clock3 size={16} />
@@ -1204,7 +1469,7 @@ function QueryV2({
     </section>
   );
 }
-function AssetsV2() {
+function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
   const [search, setSearch] = useState("");
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [directory, setDirectory] = useState("");
@@ -1213,6 +1478,8 @@ function AssetsV2() {
   const [datasetQuestion, setDatasetQuestion] = useState("");
   const [datasetResult, setDatasetResult] = useState<QueryResult | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [selectedAsset, setSelectedAsset] = useState<(typeof assets)[number] | null>(null);
+  const [assetMessage, setAssetMessage] = useState("");
   const filtered = assets.filter((item) =>
     (item.name + " " + item.desc).toLowerCase().includes(search.toLowerCase()),
   );
@@ -1318,13 +1585,25 @@ function AssetsV2() {
             <p>{a.desc}</p>
             <div className="asset-foot">
               <span>{a.rows} 行</span>
-              <button className="text-btn">
+              <button className="text-btn" onClick={() => { setSelectedAsset(a); setAssetMessage(""); }}>
                 查看详情 <ChevronRight size={14} />
               </button>
             </div>
           </div>
         ))}
       </div>
+      {selectedAsset && (
+        <div className="panel asset-detail-panel">
+          <div className="panel-head">
+            <div className="panel-title"><Database size={18} /><span><h3>{selectedAsset.name}</h3><small>{selectedAsset.type} · {selectedAsset.owner}</small></span></div>
+            <button className="icon-button" onClick={() => setSelectedAsset(null)} aria-label="关闭资产详情"><X size={16} /></button>
+          </div>
+          <p>{selectedAsset.desc}</p>
+          {assetMessage && <div className="inline-success"><CheckCircle2 size={14} />{assetMessage}</div>}
+          <div className="asset-detail-facts"><span><b>数据规模</b>{selectedAsset.rows} 行</span><span><b>质量评分</b>{selectedAsset.quality}</span><span><b>责任团队</b>{selectedAsset.owner}</span></div>
+          <div className="asset-detail-actions"><button className="secondary" onClick={() => setPage("catalog")}><Network size={15} />查看结构与关系</button><button className="primary" onClick={() => setAssetMessage("已创建该资产的治理任务草稿")}><ListChecks size={15} />创建治理任务</button></div>
+        </div>
+      )}
       {datasets.length > 0 && (
         <>
           <div className="panel dataset-list">
