@@ -29,6 +29,7 @@
 | 19 | [模块 Agent 功能开发说明](模块Agent功能开发说明.md) | 一键装配、模型绑定、工具白名单、审批策略、接口与验收边界 |
 | 20 | [七阶段实施状态](企业AI落地平台-七阶段实施状态.md) | 附件实施清单与当前可运行代码、验证结果、生产化边界对照 |
 | 21 | [TiDB全面替换专项实施方案](TiDB全面替换专项实施方案.md) | 平台内部数据库统一 TiDB、Schema、HTAP、资源组、迁移、CDC、BR 与验收 |
+| 22 | [开源项目引入决策](企业AI落地平台-开源项目引入决策.md) | 开源项目准入、采用/拒绝决策、许可证边界和分阶段落地计划 |
 
 ## 统一技术与交付约定
 
@@ -39,7 +40,7 @@
 - 模型：通过 Model Gateway 统一接入 OpenAI-Compatible、Ollama、vLLM、TGI、云模型和企业自建模型。
 - 安全：默认只读、RBAC + ABAC、RLS、SQL AST 校验、Executor 隔离、审批、验证、回滚和全量审计。
 - 部署：支持 Docker Compose 本地版、Helm/Kubernetes 内网版和无公网完全离线版。
-- 工程门禁：前端 `npm run lint`、`npm run typecheck`、`npm run format:check`、`npm run build`；后端 `pytest`、`compileall`；GitHub Actions 在 PR 和主干推送时自动执行。
+- 工程门禁：前端 `npm run lint`、`npm run typecheck`、`npm run format:check`、`npm run build`、`npm run test:e2e`；后端 `pytest`、`compileall`；GitHub Actions 在 PR 和主干推送时自动执行。
 - 镜像：提供 [backend/Dockerfile](backend/Dockerfile) 和 [apps/web/Dockerfile](apps/web/Dockerfile)，Web 镜像使用 Nginx SPA fallback，API 镜像以非开发 reload 模式启动。
 
 ## 当前状态

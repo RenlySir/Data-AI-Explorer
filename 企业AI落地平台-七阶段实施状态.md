@@ -8,7 +8,8 @@
 |---|---|---|
 | 工程规范 | 前端 ESLint 9、TypeScript typecheck、Prettier；后端 compileall；GitHub Actions CI | `npm run lint`、`npm run typecheck`、`npm run format:check`、`npm run build`、`pytest` |
 | 前端体验 | 可收起侧栏、64px 顶栏、环境标识、登录错误态；ChatBI 三栏结果区；统一 OperationProgress；SSE 断线有限重连 | Vite 构建通过；远端控制节点页面返回最新静态包 |
-| 后端稳定性 | 请求 ID、安全响应头、Prometheus 文本指标、ChatBI SSE 阶段事件；只读 SQL 防护与数据源访问控制 | 52 个后端测试；远端 `/health`、`/metrics`、ChatBI/SSE 实测 |
+| 后端稳定性 | 请求 ID、安全响应头、Prometheus 文本指标、ChatBI SSE 阶段事件；只读 SQL 防护与数据源访问控制 | 56 个后端测试；远端 `/health`、`/metrics`、ChatBI/SSE 实测 |
+| 测试质量 | 官方 Playwright Page Object；桌面与移动端登录、模型引导、数据源和 ChatBI 旅程；失败 Trace/截图/视频 | `npm run test:e2e`；GitHub Actions 独立 E2E job |
 | 部署运维 | Compose、本地开发脚本、前后端 Dockerfile、Nginx SPA 配置、Helm chart、三节点 systemd 部署脚本 | Compose 配置校验、脚本语法检查、三节点健康验证 |
 | 数据与演示 | TiDB 元数据和审计表、演示业务数据、MCP/直连降级路径、CSV/Parquet/DuckDB；默认 Compose 已切换 TiDB | 三台 TiDB 均返回 ready，版本为 `v9.1.0`；真实 `aegis_demo` 数据源、关系采集和 ChatBI 通过 |
 
@@ -30,7 +31,7 @@
 2. 用 Temporal 持久化长流程检查点，用 Kafka/Outbox 解耦审计和通知，并实现多实例互斥。
 3. 将模型密钥、数据源凭证和 Agent 配置迁移到 Vault/OpenBao/KMS 加密存储，接入完整 RBAC/ABAC 与租户隔离。
 4. 将当前进程内工作集迁移到租户化 TiDB 表和对象存储；知识库生产检索接入 TiDB 向量索引或 OpenSearch。
-5. 补齐 Playwright 浏览器旅程、Testcontainers 集成测试、JMeter/Gatling 压测，以及真实 Prometheus/OpenTelemetry/Jaeger 验收。
+5. 继续扩展 Playwright 到模型真实接入、完整 ChatBI 执行和高风险审批；补齐 Testcontainers、JMeter/Gatling，以及真实 Prometheus/OpenTelemetry/Trace 后端验收。
 6. 在具备 Docker daemon 的构建机上完成镜像构建、漏洞扫描、签名和离线镜像仓库发布；在具备 Helm CLI/Kubernetes 集群的环境执行 `helm template`、安装、升级和回滚演练。
 
 ## 生产验收原则
