@@ -22,6 +22,8 @@
 | 12 | [SQL 优化模块专项测试方案与执行报告](SQL优化模块-专项测试方案与执行报告.md) | 版本差异、规则、输入、真实计划门禁和生产验收标准 |
 | 13 | [多场景中心开发说明](多场景中心开发说明.md) | 12 个 Agent Team 场景、运行状态机、审批门禁和外部适配器规划 |
 | 14 | [多场景中心专项测试方案与执行报告](多场景中心-专项测试方案与执行报告.md) | 场景完整性、运行推进、审批安全和生产验收边界 |
+| 15 | [知识库模块产品与研发设计方案](知识库模块产品与研发设计方案.md) | LangChain/RAG 产品、架构、前后端、部署与演进设计 |
+| 16 | [知识库模块专项测试方案与执行报告](知识库模块-专项测试方案与执行报告.md) | 入库、检索、引用、安全、回归与生产测试基线 |
 
 ## 统一技术与交付约定
 
@@ -35,7 +37,7 @@
 
 ## 当前状态
 
-当前版本已包含可运行的 Vite 前端、FastAPI 智能问数、AIOps SQL 优化和多场景中心联调切片：支持 TiDB MCP、Text2SQL、ECharts、CSV/Parquet、TiDB 7.5-8.5 SQL 优化；场景中心覆盖《多场景探索》的 12 个 Agent Team 模板，并支持运行实例、步骤推进、证据、审计和高风险审批门禁。真实外部系统 Adapter、模型网关、认证权限和持久化仍需按专项测试报告完成生产集成验收。
+当前版本已包含可运行的 Vite 前端、FastAPI 智能问数、AIOps SQL 优化、多场景中心和知识库联调切片：知识库支持创建、文本/文件/本机目录入库、本地分块检索、确定性回答和引用溯源。真实外部 Adapter、向量库、模型网关、认证权限和持久化仍需按专项测试报告完成生产集成验收。
 
 ## 本地开发
 
@@ -66,3 +68,4 @@ docker compose down -v
 - [智能问数场景](https://pingcap-cn.feishu.cn/wiki/JJpUwKZ4FiuI6lkCkCQcHf3bn8f)
 - [AIOPS](https://pingcap-cn.feishu.cn/wiki/KiZCwMR9ziz47UkgXbtcekrdnvg)
 - [多场景探索](https://pingcap-cn.feishu.cn/wiki/SRmBwpk7QiaXZFkM9bYciwWfnJe)
+- [LangChain Retrieval](https://docs.langchain.com/oss/python/langchain/retrieval)

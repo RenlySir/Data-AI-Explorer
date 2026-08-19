@@ -6,6 +6,7 @@ import re
 import shutil
 import tempfile
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -37,6 +38,19 @@ from app.scenario_catalog import (
     ScenarioRunCreate,
     now_iso as scenario_now_iso,
     new_run,
+)
+from app.knowledge_base import (
+    KNOWLEDGE_BASES,
+    KnowledgeBaseCreate,
+    KnowledgeBaseRecord,
+    KnowledgeDocument,
+    KnowledgeDocumentCreate,
+    KnowledgeQuery,
+    KnowledgeQueryResult,
+    add_document,
+    create_knowledge_base,
+    list_documents,
+    query_knowledge_base,
 )
 
 
@@ -103,6 +117,11 @@ class DatasetAnalyzeRequest(BaseModel):
 
 class LocalDirectoryRequest(BaseModel):
     path: str = Field(min_length=1, max_length=1024)
+
+
+class KnowledgeDirectoryRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=1024)
+    tags: list[str] = Field(default_factory=list, max_length=20)
 
 
 class Dataset(BaseModel):
@@ -173,6 +192,9 @@ MCP_CONNECTION: TidbMcpIntrospectRequest | None = None
 DATASETS: dict[str, Dataset] = {}
 DATASET_DIR = Path(os.getenv("DATASET_STORAGE_DIR", tempfile.gettempdir() + "/aegis-datasets"))
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
+
+KNOWLEDGE_ALLOWED_SUFFIXES = {".txt", ".md", ".markdown", ".html", ".htm", ".json", ".sql", ".ddl"}
+KNOWLEDGE_MAX_FILE_BYTES = 4 * 1024 * 1024
 
 app = FastAPI(title="Data AI Explorer API", version="0.2.0", description="企业 AI 落地平台的智能问数和数据目录 API")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://localhost:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -390,6 +412,45 @@ def allowed_local_path(path: Path) -> bool:
     return any(resolved == root or root in resolved.parents for root in roots)
 
 
+class _KnowledgeHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+        self.ignored_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style"}:
+            self.ignored_depth += 1
+        elif tag in {"p", "div", "br", "li", "h1", "h2", "h3", "h4", "tr"}:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style"} and self.ignored_depth:
+            self.ignored_depth -= 1
+        elif tag in {"p", "div", "li", "h1", "h2", "h3", "h4", "tr"}:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self.ignored_depth:
+            self.parts.append(data)
+
+
+def knowledge_file_text(name: str, payload: bytes) -> tuple[str, str]:
+    suffix = Path(name).suffix.lower()
+    if suffix not in KNOWLEDGE_ALLOWED_SUFFIXES:
+        raise HTTPException(415, f"unsupported knowledge document type: {suffix or 'unknown'}")
+    try:
+        text = payload.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(400, f"knowledge document must be UTF-8: {name}") from exc
+    if suffix in {".html", ".htm"}:
+        parser = _KnowledgeHTMLParser()
+        parser.feed(text)
+        return "".join(parser.parts), "text/html"
+    mime_types = {".md": "text/markdown", ".markdown": "text/markdown", ".json": "application/json", ".sql": "application/sql", ".ddl": "application/sql"}
+    return text, mime_types.get(suffix, "text/plain")
+
+
 def active_mcp_config(explicit_endpoint: str | None = None) -> tuple[str, str | None, dict[str, str]]:
     endpoint = explicit_endpoint or (MCP_CONNECTION.endpoint if MCP_CONNECTION else None) or os.getenv("TIDB_MCP_ENDPOINT", "").strip()
     if not endpoint or endpoint in ("demo://tidb", "demo"):
@@ -539,6 +600,129 @@ def analyze_dataset(payload: DatasetAnalyzeRequest) -> QueryOperation:
     operation = QueryOperation(operation_id=f"op-{uuid4().hex[:10]}", status="completed", question=payload.question, sql=sql, answer="已完成文件数据分析，结果可继续转为报表或任务。", columns=columns, rows=rows, chart=chart_spec(columns, rows, payload.question), evidence=[{"type": "dataset", "label": dataset.name, "ref": dataset.id}, {"type": "engine", "label": "DuckDB", "ref": "duckdb"}], created_at=now_iso())
     OPERATIONS[operation.operation_id] = operation
     return operation
+
+
+@app.get("/api/v1/knowledge-bases", response_model=list[KnowledgeBaseRecord], tags=["knowledge"])
+def list_knowledge_bases(search: str | None = Query(None)) -> list[KnowledgeBaseRecord]:
+    query = (search or "").strip().lower()
+    return [
+        item
+        for item in reversed(list(KNOWLEDGE_BASES.values()))
+        if not query or query in f"{item.name} {item.description}".lower()
+    ]
+
+
+@app.post("/api/v1/knowledge-bases", response_model=KnowledgeBaseRecord, status_code=201, tags=["knowledge"])
+def post_knowledge_base(payload: KnowledgeBaseCreate) -> KnowledgeBaseRecord:
+    try:
+        return create_knowledge_base(payload)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/v1/knowledge-bases/{knowledge_base_id}", response_model=KnowledgeBaseRecord, tags=["knowledge"])
+def get_knowledge_base(knowledge_base_id: str) -> KnowledgeBaseRecord:
+    knowledge_base = KNOWLEDGE_BASES.get(knowledge_base_id)
+    if not knowledge_base:
+        raise HTTPException(404, "knowledge base not found")
+    return knowledge_base
+
+
+@app.get("/api/v1/knowledge-bases/{knowledge_base_id}/documents", response_model=list[KnowledgeDocument], tags=["knowledge"])
+def get_knowledge_documents(knowledge_base_id: str) -> list[KnowledgeDocument]:
+    try:
+        return list_documents(knowledge_base_id)
+    except KeyError as exc:
+        raise HTTPException(404, "knowledge base not found") from exc
+
+
+@app.post("/api/v1/knowledge-bases/{knowledge_base_id}/documents", response_model=KnowledgeDocument, status_code=201, tags=["knowledge"])
+def post_knowledge_document(knowledge_base_id: str, payload: KnowledgeDocumentCreate) -> KnowledgeDocument:
+    try:
+        return add_document(knowledge_base_id, payload)
+    except KeyError as exc:
+        raise HTTPException(404, "knowledge base not found") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/v1/knowledge-bases/{knowledge_base_id}/documents/upload", response_model=list[KnowledgeDocument], status_code=201, tags=["knowledge"])
+async def upload_knowledge_documents(knowledge_base_id: str, files: list[UploadFile] = File(...)) -> list[KnowledgeDocument]:
+    if knowledge_base_id not in KNOWLEDGE_BASES:
+        raise HTTPException(404, "knowledge base not found")
+    if not files or len(files) > 20:
+        raise HTTPException(400, "upload between 1 and 20 knowledge documents")
+    documents: list[KnowledgeDocument] = []
+    for file in files:
+        name = Path(file.filename or "document.txt").name
+        raw = await file.read(KNOWLEDGE_MAX_FILE_BYTES + 1)
+        if len(raw) > KNOWLEDGE_MAX_FILE_BYTES:
+            raise HTTPException(413, f"knowledge document exceeds {KNOWLEDGE_MAX_FILE_BYTES} bytes: {name}")
+        content, mime_type = knowledge_file_text(name, raw)
+        try:
+            documents.append(
+                add_document(
+                    knowledge_base_id,
+                    KnowledgeDocumentCreate(
+                        title=Path(name).stem,
+                        content=content,
+                        source_type="upload",
+                        source_uri=f"upload://{name}",
+                    ),
+                    mime_type=mime_type,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(422, f"{name}: {exc}") from exc
+    return documents
+
+
+@app.post("/api/v1/knowledge-bases/{knowledge_base_id}/documents/local-directory", response_model=list[KnowledgeDocument], status_code=201, tags=["knowledge"])
+def scan_knowledge_directory(knowledge_base_id: str, payload: KnowledgeDirectoryRequest) -> list[KnowledgeDocument]:
+    if knowledge_base_id not in KNOWLEDGE_BASES:
+        raise HTTPException(404, "knowledge base not found")
+    directory = Path(payload.path).expanduser()
+    if not directory.exists() or not directory.is_dir() or directory.is_symlink() or not allowed_local_path(directory):
+        raise HTTPException(403, "directory is not allowed")
+    paths = [
+        item
+        for item in directory.rglob("*")
+        if item.is_file()
+        and not item.is_symlink()
+        and allowed_local_path(item)
+        and item.suffix.lower() in KNOWLEDGE_ALLOWED_SUFFIXES
+    ][:100]
+    documents: list[KnowledgeDocument] = []
+    for path in paths:
+        if path.stat().st_size > KNOWLEDGE_MAX_FILE_BYTES:
+            raise HTTPException(413, f"knowledge document exceeds {KNOWLEDGE_MAX_FILE_BYTES} bytes: {path.name}")
+        content, mime_type = knowledge_file_text(path.name, path.read_bytes())
+        try:
+            documents.append(
+                add_document(
+                    knowledge_base_id,
+                    KnowledgeDocumentCreate(
+                        title=path.stem,
+                        content=content,
+                        source_type="local_directory",
+                        source_uri=str(path.resolve()),
+                        tags=payload.tags,
+                        metadata={"relative_path": str(path.relative_to(directory))},
+                    ),
+                    mime_type=mime_type,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(422, f"{path.name}: {exc}") from exc
+    return documents
+
+
+@app.post("/api/v1/knowledge-bases/{knowledge_base_id}/query", response_model=KnowledgeQueryResult, tags=["knowledge"])
+def post_knowledge_query(knowledge_base_id: str, payload: KnowledgeQuery) -> KnowledgeQueryResult:
+    try:
+        return query_knowledge_base(knowledge_base_id, payload)
+    except KeyError as exc:
+        raise HTTPException(404, "knowledge base not found") from exc
 
 
 @app.get("/api/v1/aiops/sql-optimizer/versions", tags=["sql-optimizer"])

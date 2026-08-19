@@ -32,10 +32,17 @@ import {
   CircleCheck,
   ArrowRight,
   RefreshCw,
+  BookOpen,
+  FileText,
+  FolderOpen,
+  Plus,
+  Quote,
+  Send,
 } from "lucide-react";
 import "./styles.css";
 import "./optimizer.css";
 import "./scenarios.css";
+import "./knowledge.css";
 
 type Page =
   | "workbench"
@@ -44,7 +51,8 @@ type Page =
   | "assets"
   | "catalog"
   | "sql-optimizer"
-  | "scenarios";
+  | "scenarios"
+  | "knowledge";
 type Catalog = {
   database: string;
   source: string;
@@ -164,6 +172,50 @@ type ScenarioRun = {
   approvals_granted: number;
   audit: string[];
 };
+type KnowledgeBaseRecord = {
+  id: string;
+  name: string;
+  description: string;
+  scope: string;
+  embedding_provider: string;
+  retrieval_strategy: string;
+  chunk_size: number;
+  chunk_overlap: number;
+  document_count: number;
+  chunk_count: number;
+  created_at: string;
+  updated_at: string;
+};
+type KnowledgeDocument = {
+  id: string;
+  title: string;
+  source_type: "text" | "upload" | "local_directory" | "connector";
+  source_uri: string;
+  mime_type: string;
+  content_size: number;
+  status: "ready" | "processing" | "failed";
+  chunk_count: number;
+  tags: string[];
+  updated_at: string;
+};
+type KnowledgeQueryResult = {
+  query_id: string;
+  question: string;
+  answer: string;
+  confidence: "low" | "medium" | "high";
+  retrieval_mode: string;
+  citations: {
+    rank: number;
+    document_id: string;
+    document_title: string;
+    chunk_id: string;
+    score: number;
+    excerpt: string;
+    source_uri: string;
+    tags: string[];
+  }[];
+  generated_at: string;
+};
 const API_BASE = (
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api/v1"
 ).replace(/\/$/, "");
@@ -260,6 +312,7 @@ function App() {
     ["query", "智能问数", MessageSquare],
     ["incidents", "AIOps 事件", Activity],
     ["scenarios", "场景中心", Workflow],
+    ["knowledge", "知识库", BookOpen],
     ["sql-optimizer", "SQL 优化", WandSparkles],
     ["assets", "数据资产", Database],
     ["catalog", "TiDB 结构", Network],
@@ -298,21 +351,22 @@ function App() {
         {nav.map(([id, label, Icon]) => (
           <button
             className={page === id ? "nav active" : "nav"}
+            aria-label={label}
             onClick={() => setPage(id)}
             key={id}
           >
             <Icon size={18} />
-            {label}
+            <span className="nav-label">{label}</span>
           </button>
         ))}
         <div className="aside-bottom">
-          <button className="nav" onClick={() => setPage("catalog")}>
+          <button className="nav" aria-label="系统设置" onClick={() => setPage("catalog")}>
             <Settings size={18} />
-            系统设置
+            <span className="nav-label">系统设置</span>
           </button>
-          <button className="nav" onClick={() => setLogged(false)}>
+          <button className="nav" aria-label="退出登录" onClick={() => setLogged(false)}>
             <LogOut size={18} />
-            退出登录
+            <span className="nav-label">退出登录</span>
           </button>
         </div>
       </aside>
@@ -342,6 +396,7 @@ function App() {
         )}{" "}
         {page === "incidents" && <Incidents />}{" "}
         {page === "scenarios" && <ScenarioCenter />}{" "}
+        {page === "knowledge" && <KnowledgeBasePage />}{" "}
         {page === "sql-optimizer" && <SQLOptimizerPage />}{" "}
         {page === "assets" && <AssetsV2 />}{" "}
         {page === "catalog" && (
@@ -1092,6 +1147,263 @@ function CatalogPage({
       )}
     </section>
   );
+}
+function KnowledgeBasePage() {
+  const [libraries, setLibraries] = useState<KnowledgeBaseRecord[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [question, setQuestion] = useState("TiDB 巡检发现慢 SQL 时应该如何处理？");
+  const [result, setResult] = useState<KnowledgeQueryResult | null>(null);
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const [tags, setTags] = useState("");
+  const [directory, setDirectory] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newDescription, setNewDescription] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const selected = libraries.find((item) => item.id === selectedId) || libraries[0];
+
+  const loadLibraries = async (preferredId?: string) => {
+    try {
+      const items = await api<KnowledgeBaseRecord[]>("/knowledge-bases");
+      setLibraries(items);
+      setSelectedId((current) => preferredId || current || items[0]?.id || "");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "知识库加载失败");
+    }
+  };
+  const loadDocuments = async (knowledgeBaseId: string) => {
+    try {
+      setDocuments(await api<KnowledgeDocument[]>(`/knowledge-bases/${knowledgeBaseId}/documents`));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "文档列表加载失败");
+    }
+  };
+  useEffect(() => {
+    void loadLibraries();
+  }, []);
+  useEffect(() => {
+    if (selectedId) {
+      setResult(null);
+      void loadDocuments(selectedId);
+    }
+  }, [selectedId]);
+  const refresh = async () => {
+    await loadLibraries(selectedId);
+    if (selectedId) await loadDocuments(selectedId);
+  };
+  const createLibrary = async () => {
+    if (!newName.trim()) return;
+    setBusy("create");
+    setError("");
+    try {
+      const item = await api<KnowledgeBaseRecord>("/knowledge-bases", {
+        method: "POST",
+        body: JSON.stringify({ name: newName.trim(), description: newDescription.trim() }),
+      });
+      setNewName("");
+      setNewDescription("");
+      setShowCreate(false);
+      await loadLibraries(item.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "创建知识库失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const addTextDocument = async () => {
+    if (!selected || !title.trim() || !content.trim()) return;
+    setBusy("text");
+    setError("");
+    try {
+      await api<KnowledgeDocument>(`/knowledge-bases/${selected.id}/documents`, {
+        method: "POST",
+        body: JSON.stringify({
+          title: title.trim(),
+          content,
+          tags: tags.split(",").map((item) => item.trim()).filter(Boolean),
+        }),
+      });
+      setTitle("");
+      setContent("");
+      setTags("");
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "文档入库失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const uploadDocuments = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!selected || !event.target.files?.length) return;
+    setBusy("upload");
+    setError("");
+    try {
+      const form = new FormData();
+      Array.from(event.target.files).forEach((file) => form.append("files", file));
+      await api<KnowledgeDocument[]>(`/knowledge-bases/${selected.id}/documents/upload`, {
+        method: "POST",
+        body: form,
+      });
+      event.target.value = "";
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "文件上传失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const scanDirectory = async () => {
+    if (!selected || !directory.trim()) return;
+    setBusy("directory");
+    setError("");
+    try {
+      await api<KnowledgeDocument[]>(`/knowledge-bases/${selected.id}/documents/local-directory`, {
+        method: "POST",
+        body: JSON.stringify({
+          path: directory.trim(),
+          tags: tags.split(",").map((item) => item.trim()).filter(Boolean),
+        }),
+      });
+      setDirectory("");
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "目录扫描失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const query = async () => {
+    if (!selected || !question.trim()) return;
+    setBusy("query");
+    setError("");
+    try {
+      setResult(await api<KnowledgeQueryResult>(`/knowledge-bases/${selected.id}/query`, {
+        method: "POST",
+        body: JSON.stringify({ question: question.trim(), top_k: 5 }),
+      }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "知识库检索失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  return (
+    <section className="content knowledge-page">
+      <div className="section-head">
+        <div>
+          <span className="eyebrow">RAG · 文档分块 · 引用溯源</span>
+          <h1>知识库</h1>
+          <p className="section-subtitle">把企业规范、运维手册和项目资料沉淀为可检索、可核验的工作上下文。</p>
+        </div>
+        <button className="secondary" onClick={() => void refresh()} disabled={Boolean(busy)}>
+          <RefreshCw size={15} /> 刷新
+        </button>
+      </div>
+      {error && <div className="error-banner">{error}<button onClick={() => setError("")}><X size={14} /></button></div>}
+      <div className="knowledge-layout">
+        <div className="panel knowledge-library">
+          <div className="panel-head">
+            <h3><LibraryIcon /> 知识库</h3>
+            <button className="icon-btn" title="新建知识库" onClick={() => setShowCreate((current) => !current)}><Plus size={16} /></button>
+          </div>
+          {showCreate && (
+            <div className="knowledge-create">
+              <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="知识库名称" />
+              <input value={newDescription} onChange={(event) => setNewDescription(event.target.value)} placeholder="用途描述（可选）" />
+              <button className="primary" onClick={() => void createLibrary()} disabled={busy === "create"}><Plus size={14} /> 创建</button>
+            </div>
+          )}
+          <div className="knowledge-library-list">
+            {libraries.map((item) => (
+              <button key={item.id} className={item.id === selected?.id ? "knowledge-library-item active" : "knowledge-library-item"} onClick={() => setSelectedId(item.id)}>
+                <span className="knowledge-library-icon"><BookOpen size={15} /></span>
+                <span><b>{item.name}</b><small>{item.document_count} 份文档 · {item.chunk_count} 个片段</small></span>
+              </button>
+            ))}
+            {!libraries.length && <div className="empty">暂无知识库</div>}
+          </div>
+        </div>
+        <div className="knowledge-main">
+          {selected ? (
+            <>
+              <div className="knowledge-stats">
+                <Metric label="文档数" value={String(selected.document_count)} hint="已完成索引" tone="blue" />
+                <Metric label="检索片段" value={String(selected.chunk_count)} hint={selected.retrieval_strategy} tone="purple" />
+                <Metric label="分块大小" value={`${selected.chunk_size}`} hint={`重叠 ${selected.chunk_overlap}`} tone="green" />
+                <Metric label="索引模式" value="本地" hint={selected.embedding_provider} tone="red" />
+              </div>
+              <div className="panel knowledge-query">
+                <div className="panel-head">
+                  <div><h3><MessageSquare size={16} /> 检索问答</h3><span className="panel-help">{selected.name}</span></div>
+                  <span className="chip success">引用优先</span>
+                </div>
+                <textarea value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="输入关于制度、数据或运维资料的问题..." />
+                <div className="knowledge-query-actions">
+                  <span>最多返回 5 个相关片段</span>
+                  <button className="primary" onClick={() => void query()} disabled={busy === "query"}><Send size={15} /> {busy === "query" ? "检索中..." : "检索并回答"}</button>
+                </div>
+                {result && (
+                  <div className="knowledge-answer">
+                    <div className="knowledge-answer-head">
+                      <b>回答</b>
+                      <span className={`chip ${result.confidence === "low" ? "" : "success"}`}>{result.confidence === "high" ? "高置信度" : result.confidence === "medium" ? "中置信度" : "未找到充分证据"}</span>
+                    </div>
+                    <p>{result.answer}</p>
+                    <div className="knowledge-answer-meta">检索模式：{result.retrieval_mode} · 查询 ID：{result.query_id}</div>
+                    <div className="knowledge-citations">
+                      <div className="knowledge-citations-title"><Quote size={14} /> 引用来源（{result.citations.length}）</div>
+                      {result.citations.map((citation) => (
+                        <div className="knowledge-citation" key={citation.chunk_id}>
+                          <div className="citation-rank">{citation.rank}</div>
+                          <div><b>{citation.document_title}</b><span>{citation.excerpt}</span><small>相关度 {(citation.score * 100).toFixed(0)}% · {citation.source_uri}</small></div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="knowledge-columns">
+                <div className="panel knowledge-documents">
+                  <div className="panel-head"><h3><FileText size={16} /> 文档库</h3><span className="chip">{documents.length} 份</span></div>
+                  <div className="knowledge-document-list">
+                    {documents.map((document) => (
+                      <div className="knowledge-document-row" key={document.id}>
+                        <span className="knowledge-doc-icon"><FileText size={15} /></span>
+                        <div><b>{document.title}</b><span>{document.source_type} · {document.chunk_count} 个片段</span></div>
+                        <span className="chip success">{document.status === "ready" ? "已就绪" : document.status}</span>
+                      </div>
+                    ))}
+                    {!documents.length && <div className="empty">尚未添加文档</div>}
+                  </div>
+                </div>
+                <div className="panel knowledge-ingest">
+                  <div className="panel-head"><h3><UploadCloud size={16} /> 添加资料</h3><span className="panel-help">支持 TXT / Markdown / HTML / JSON / SQL</span></div>
+                  <div className="knowledge-ingest-tabs">
+                    <span className="active"><FileText size={13} /> 文本</span>
+                    <label className="secondary file-button"><UploadCloud size={14} /> 上传文件<input type="file" multiple accept=".txt,.md,.markdown,.html,.htm,.json,.sql,.ddl" onChange={(event) => void uploadDocuments(event)} /></label>
+                  </div>
+                  <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="文档标题" />
+                  <textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="粘贴规范、手册或项目资料..." />
+                  <input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="标签，用逗号分隔（可选）" />
+                  <button className="primary wide" onClick={() => void addTextDocument()} disabled={busy === "text" || !title.trim() || !content.trim()}><Plus size={15} /> {busy === "text" ? "入库中..." : "入库文本"}</button>
+                  <div className="knowledge-directory">
+                    <label><FolderOpen size={14} /> 本机目录</label>
+                    <div><input value={directory} onChange={(event) => setDirectory(event.target.value)} placeholder="/data/handbook" /><button className="secondary" onClick={() => void scanDirectory()} disabled={busy === "directory"}>扫描</button></div>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : <div className="empty panel">请选择或创建知识库</div>}
+        </div>
+      </div>
+    </section>
+  );
+}
+function LibraryIcon() {
+  return <BookOpen size={16} />;
 }
 function scenarioStatusLabel(status: ScenarioRun["status"] | Scenario["status"] | ScenarioStep["status"]) {
   return ({ ready: "可运行", running: "运行中", waiting_approval: "等待审批", completed: "已完成", failed: "失败", queued: "排队中", skipped: "已跳过" } as Record<string, string>)[status] || status;

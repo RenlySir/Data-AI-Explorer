@@ -423,3 +423,7 @@ MVP 后优先按真实瓶颈演进：Query/AIOps 独立扩容；引入 CDC 更�
 6. 模型部署方式、中文/SQL 能力评测基线、成本和延迟预算。
 
 这些输入确认后，本架构可直接进入接口详细设计、数据库物理设计、页面交互稿和 Sprint 拆分。
+
+## 16. 知识库与 RAG 子系统补充
+
+知识库采用 Loader → Parser → Splitter → Indexer → Hybrid Retriever → ACL Filter → Reranker → Answer Composer → Citation Validator 管线。MVP 使用内存和词法检索；生产使用 PostgreSQL、MinIO、OpenSearch 与 pgvector/Qdrant/Milvus。Embedding、Rerank 和 Chat 通过 Model Gateway 适配云模型与自建模型；权限在召回前下推，回答保存引用和审计。详见《知识库模块产品与研发设计方案》。

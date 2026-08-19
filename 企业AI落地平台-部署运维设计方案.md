@@ -201,3 +201,7 @@ P0：控制面不可用、数据泄露、Executor 未授权执行；立即电话
 - 模型 Provider、GPU、Connector、Executor 具备健康检查和降级路径。
 - 任何高风险动作均能追溯发起人、审批、参数、执行、验证和回滚。
 - 离线包可验签，公网 egress 关闭后核心功能仍可用。
+
+## 17. 知识库部署补充
+
+本地知识库随 FastAPI 运行；允许目录由只读卷和 DATASET_ALLOWED_ROOTS 控制。生产新增 knowledge-worker、对象存储、全文索引、向量库和本地 Embedding/Reranker。监控入库队列、解析/Embedding 失败、Chunk 分布、召回延迟、无结果率、Citation Coverage 和索引版本；恢复时先还原元数据与原文，再恢复或重建索引并做 checksum 对账。

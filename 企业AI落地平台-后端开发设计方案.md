@@ -253,3 +253,7 @@ Java、Python、Connector、Executor 统一 OpenTelemetry。指标包括 API 延
 ## 16. 后端验收
 
 所有接口具备 OpenAPI；所有状态机拒绝非法转换；写 SQL/越权查询 100% 拦截；异步流程可恢复、可取消、可审计；消息重复不造成重复执行；生产 Executor 不支持任意 Shell；至少一个本地模型、一个 OpenAI-compatible 模型和一个云模型通过能力探测、路由和故障降级测试。
+
+## 17. 知识库服务补充
+
+知识库 API 位于 /api/v1/knowledge-bases，覆盖创建/查询、文档文本/文件/允许目录入库与引用问答。backend/app/knowledge_base.py 实现内存领域模型、段落感知切分、中文/英文词法召回和确定性引用回答；backend/app/main.py 负责 HTTP、HTML 清洗和文件安全。生产迁移到持久化异步 IndexJob，使用 checksum 加 parser/splitter/embedding version 幂等，召回前强制 ACL。
