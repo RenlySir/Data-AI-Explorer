@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   Play,
   ChevronRight,
+  ChevronDown,
   LogOut,
   Network,
   Link2,
@@ -77,6 +78,7 @@ type Page =
   | "models"
   | "datasources"
   | "settings";
+type QueryModule = "chatbi" | "dashboard";
 const ROUTABLE_PAGES: Page[] = [
   "workbench",
   "capabilities",
@@ -585,6 +587,8 @@ function App() {
   const [notice, setNotice] = useState("");
   const [focusCapabilitySearch, setFocusCapabilitySearch] = useState(false);
   const [querySeed, setQuerySeed] = useState("");
+  const [queryModule, setQueryModule] = useState<QueryModule>("chatbi");
+  const [queryExpanded, setQueryExpanded] = useState(() => page === "query");
   const [modelOnboarding, setModelOnboarding] = useState(false);
   type NavItem = [Page, string, React.ComponentType<{ size?: number }>];
   type NavGroup = [string, NavItem[]];
@@ -628,7 +632,11 @@ function App() {
   const pageTitle =
     page === "settings"
       ? "系统设置"
-      : nav.find((item) => item[0] === page)?.[1];
+      : page === "query"
+        ? queryModule === "dashboard"
+          ? "大屏展示"
+          : "ChatBI"
+        : nav.find((item) => item[0] === page)?.[1];
   const navigatePage = (next: Page) => {
     setPage(next);
     const nextHash = `#/${next}`;
@@ -637,6 +645,14 @@ function App() {
   };
   const openQuery = (question = "") => {
     setQuerySeed(question);
+    setQueryModule("chatbi");
+    setQueryExpanded(true);
+    navigatePage("query");
+  };
+  const openQueryModule = (module: QueryModule) => {
+    setQuerySeed("");
+    setQueryModule(module);
+    setQueryExpanded(true);
     navigatePage("query");
   };
   useEffect(() => {
@@ -648,6 +664,9 @@ function App() {
   }, []);
   useEffect(() => {
     if (page !== "capabilities") setFocusCapabilitySearch(false);
+  }, [page]);
+  useEffect(() => {
+    setQueryExpanded(page === "query");
   }, [page]);
   const handleLogin = async () => {
     setLogged(true);
@@ -687,21 +706,83 @@ function App() {
           {navGroups.map(([group, items]) => (
             <div className="nav-group" key={group}>
               <span className="nav-section">{group}</span>
-              {items.map(([id, label, Icon]) => (
-                <button
-                  className={page === id ? "nav active" : "nav"}
-                  aria-label={label}
-                  aria-current={page === id ? "page" : undefined}
-                  title={label}
-                  onClick={() =>
-                    id === "query" ? openQuery() : navigatePage(id)
-                  }
-                  key={id}
-                >
-                  <Icon size={18} />
-                  <span className="nav-label">{label}</span>
-                </button>
-              ))}
+              {items.map(([id, label, Icon]) =>
+                id === "query" ? (
+                  <React.Fragment key={id}>
+                    <button
+                      className={
+                        page === id ? "nav nav-parent active" : "nav nav-parent"
+                      }
+                      aria-label={label}
+                      aria-expanded={queryExpanded}
+                      aria-controls="query-subnav"
+                      title={label}
+                      onClick={() => {
+                        setQueryExpanded((expanded) => !expanded);
+                        if (page !== "query") openQuery();
+                      }}
+                    >
+                      <Icon size={18} />
+                      <span className="nav-label">{label}</span>
+                      <ChevronDown
+                        className="nav-chevron"
+                        size={15}
+                        aria-hidden="true"
+                      />
+                    </button>
+                    {queryExpanded && (
+                      <div className="nav-subgroup" id="query-subnav">
+                        <button
+                          className={
+                            page === "query" && queryModule === "chatbi"
+                              ? "nav nav-sub active"
+                              : "nav nav-sub"
+                          }
+                          aria-label="ChatBI"
+                          aria-current={
+                            page === "query" && queryModule === "chatbi"
+                              ? "page"
+                              : undefined
+                          }
+                          onClick={() => openQueryModule("chatbi")}
+                        >
+                          <MessageSquare size={16} />
+                          <span className="nav-label">ChatBI</span>
+                        </button>
+                        <button
+                          className={
+                            page === "query" && queryModule === "dashboard"
+                              ? "nav nav-sub active"
+                              : "nav nav-sub"
+                          }
+                          aria-label="大屏展示"
+                          aria-current={
+                            page === "query" && queryModule === "dashboard"
+                              ? "page"
+                              : undefined
+                          }
+                          onClick={() => openQueryModule("dashboard")}
+                        >
+                          <MonitorUp size={16} />
+                          <span className="nav-label">大屏展示</span>
+                        </button>
+                      </div>
+                    )}
+                  </React.Fragment>
+                ) : (
+                  <button
+                    className={page === id ? "nav active" : "nav"}
+                    aria-label={label}
+                    aria-current={page === id ? "page" : undefined}
+                    title={label}
+                    onClick={() => navigatePage(id)}
+                    key={id}
+                  >
+                    <Icon size={18} />
+                    <span className="nav-label">{label}</span>
+                  </button>
+                ),
+              )}
             </div>
           ))}
         </nav>
@@ -788,7 +869,11 @@ function App() {
           />
         )}{" "}
         {page === "query" && (
-          <QueryV2 initialQuestion={querySeed} />
+          <QueryV2
+            initialQuestion={querySeed}
+            module={queryModule}
+            onModuleChange={setQueryModule}
+          />
         )}{" "}
         {page === "incidents" && <Incidents setPage={navigatePage} />}{" "}
         {page === "scenarios" && <ScenarioCenter />}{" "}
@@ -2878,14 +2963,15 @@ function ChartView({ option }: { option?: EChartsOption }) {
   }, [option]);
   return <div className="echart" ref={ref} />;
 }
-type QueryModule = "chatbi" | "dashboard";
-
 function QueryV2({
   initialQuestion = "",
+  module,
+  onModuleChange,
 }: {
   initialQuestion?: string;
+  module: QueryModule;
+  onModuleChange: (module: QueryModule) => void;
 }) {
-  const [module, setModule] = useState<QueryModule>("chatbi");
   const [datasources, setDatasources] = useState<DataSourceRecord[]>([]);
   const [reports, setReports] = useState<DashboardReport[]>([]);
   const [sourceId, setSourceId] = useState(
@@ -2965,7 +3051,7 @@ function QueryV2({
       });
       await loadReports();
       setMessage("已加入大屏");
-      setModule("dashboard");
+      onModuleChange("dashboard");
     } catch (e) {
       setError(e instanceof Error ? e.message : "加入大屏失败");
     }
@@ -3013,7 +3099,7 @@ function QueryV2({
             role="tab"
             aria-selected={module === id}
             onClick={() => {
-              setModule(id);
+              onModuleChange(id);
               setError("");
             }}
           >
@@ -3216,7 +3302,10 @@ function QueryV2({
               <MonitorUp size={34} />
               <b>还没有已认可报表</b>
               <span>在 ChatBI 中核验结果后，点击“认可并加入大屏”。</span>
-              <button className="secondary" onClick={() => setModule("chatbi")}>
+              <button
+                className="secondary"
+                onClick={() => onModuleChange("chatbi")}
+              >
                 <MessageSquare size={15} />
                 去生成第一张
               </button>
@@ -3250,7 +3339,7 @@ function QueryV2({
                       onClick={() => {
                         setSourceId(report.datasource_id);
                         setQuestion(report.question);
-                        setModule("chatbi");
+                        onModuleChange("chatbi");
                       }}
                     >
                       再次分析 <ArrowRight size={14} />

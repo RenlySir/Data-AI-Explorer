@@ -38,7 +38,10 @@ select {
 }
 
 button {
-  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease,
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
     box-shadow 150ms ease;
 }
 
@@ -359,6 +362,44 @@ select:focus-visible {
   border-radius: 0 2px 2px 0;
   background: #5d91f2;
   content: "";
+}
+
+.nav-parent {
+  justify-content: flex-start;
+}
+
+.nav-chevron {
+  margin-left: auto;
+  transition: transform 160ms ease;
+}
+
+.nav-parent[aria-expanded="true"] .nav-chevron {
+  transform: rotate(180deg);
+}
+
+.nav-subgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 1px 0 2px 16px;
+  padding-left: 8px;
+  border-left: 1px solid #303b4d;
+}
+
+.nav-sub {
+  min-height: 34px;
+  padding: 7px 10px;
+  color: #8f9db1;
+  font-size: 12px;
+}
+
+.nav-sub.active {
+  background: #202b3b;
+}
+
+.nav-sub.active::before {
+  top: 7px;
+  bottom: 7px;
 }
 
 .nav svg {
@@ -1322,6 +1363,25 @@ main {
   }
 
   .nav {
+    justify-content: center;
+    padding: 9px;
+  }
+
+  .nav-parent {
+    justify-content: center;
+  }
+
+  .nav-chevron {
+    display: none;
+  }
+
+  .nav-subgroup {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .nav-sub {
     justify-content: center;
     padding: 9px;
   }
