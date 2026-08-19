@@ -293,7 +293,15 @@ Playwright 最少覆盖：问题澄清、SQL 被拒绝、大结果导出、SSE �
 
 ## 25. 前端包体与图表按需加载
 
-智能问数当前只渲染折线图和表格，因此前端仅在图表实际出现时动态加载 `echarts/core`，并按需注册 `LineChart`、`GridComponent`、`TooltipComponent` 和 `CanvasRenderer`，不把完整 ECharts 集合放入首屏包。新增图表类型必须同步注册对应 Chart/Component，并在构建门禁中检查首屏包体，避免功能扩展导致无感知的首屏膨胀。
+智能问数支持折线、柱状、饼图和表格。前端仅在图表实际出现时动态加载 `echarts/core`，按需注册 `LineChart`、`BarChart`、`PieChart`、`GridComponent`、`LegendComponent`、`TooltipComponent` 和 `CanvasRenderer`，不把完整 ECharts 集合放入首屏包。新增图表类型必须同步注册对应 Chart/Component，并在构建门禁中检查首屏包体。
+
+## 24. ChatBI 三模块页面
+
+智能问数页以内嵌 Tab 组织“数据源、ChatBI、大屏展示”，不增加侧栏层级。数据源页左侧解释接入边界，右侧列出状态、结构数量和连接测试；添加按钮打开 TiDB/MySQL 表单，文件入口直接上传 CSV/Parquet。密码框不回填、不显示已保存值。
+
+ChatBI 使用左右双栏：左栏为数据源选择、建议问题、对话输入和发送动作；右栏为服务端返回的 ECharts、数据表、SQL 与证据。问题和数据源缺失时发送按钮禁用；`Ctrl/Cmd + Enter` 可提交。核验完成后的唯一主动作是“认可并加入大屏”。
+
+大屏使用两列报表网格，卡片保留数据源、问题、认可人和再次分析入口。空状态直接引导生成第一张报表；1020px 以下改为单列，390px 下页面不得横向溢出。
 
 ## 26. 企业工作台视觉与导航升级
 

@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import tempfile
+from decimal import Decimal
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -64,6 +65,21 @@ from app.knowledge_base import (
     list_documents,
     list_queries,
     query_knowledge_base,
+)
+from app.chatbi import (
+    ChatBIQuery,
+    DASHBOARD_REPORTS,
+    DATA_SOURCES,
+    DATA_SOURCE_SECRETS,
+    DataSourceCreate,
+    DataSourceRecord,
+    DashboardReport,
+    ReportCreate,
+    create_csv_source,
+    create_database_source,
+    execute_database_select,
+    inspect_database,
+    test_database_source,
 )
 
 
@@ -235,6 +251,73 @@ def chart_spec(columns: list[str], rows: list[list[Any]], title: str) -> dict[st
     return {"type": "line", "title": title, "xField": x, "yField": y, "option": {"xAxis": {"type": "category", "data": [row[0] for row in rows]}, "yAxis": {"type": "value"}, "series": [{"type": "line", "smooth": True, "data": [row[numeric_index] for row in rows]}]}}
 
 
+async def chatbi_chart_spec(question: str, columns: list[str], rows: list[list[Any]]) -> dict[str, Any]:
+    """Choose a compact ECharts visualization, using the model gateway when configured."""
+    if not columns or not rows:
+        return {"type": "table", "title": question, "option": {}}
+    numeric_index = next(
+        (index for index in range(1, len(columns)) if any(isinstance(row[index], (int, float, Decimal)) for row in rows)),
+        None,
+    )
+    if numeric_index is None:
+        return {"type": "table", "title": question, "option": {}}
+
+    chart_type = "line" if any(word in question.lower() for word in ("趋势", "每天", "按日", "日期", "trend")) else "bar"
+    if any(word in question.lower() for word in ("占比", "比例", "构成", "份额", "pie")):
+        chart_type = "pie"
+
+    endpoint = os.getenv("MODEL_GATEWAY_BASE_URL", "").strip()
+    model = os.getenv("MODEL_GATEWAY_MODEL", "").strip()
+    if endpoint and model:
+        payload = {
+            "model": model,
+            "temperature": 0,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "Choose exactly one BI chart type from line, bar, pie, table. Return only the type.",
+                },
+                {
+                    "role": "user",
+                    "content": f"Question: {question}\nColumns: {', '.join(columns)}\nRows: {len(rows)}",
+                },
+            ],
+        }
+        headers = {}
+        if os.getenv("MODEL_GATEWAY_API_KEY"):
+            headers["Authorization"] = f"Bearer {os.environ['MODEL_GATEWAY_API_KEY']}"
+        try:
+            async with httpx.AsyncClient(timeout=12) as client:
+                response = await client.post(endpoint.rstrip("/") + "/v1/chat/completions", json=payload, headers=headers)
+                response.raise_for_status()
+                candidate = response.json()["choices"][0]["message"]["content"].strip().lower()
+            if candidate in {"line", "bar", "pie", "table"}:
+                chart_type = candidate
+        except Exception:
+            # Chart selection is non-critical; keep the deterministic fallback.
+            pass
+
+    labels = [row[0] for row in rows]
+    values = [row[numeric_index] for row in rows]
+    if chart_type == "pie":
+        option = {
+            "tooltip": {"trigger": "item"},
+            "legend": {"bottom": 0},
+            "series": [{"type": "pie", "radius": ["42%", "68%"], "data": [{"name": label, "value": value} for label, value in zip(labels, values)]}],
+        }
+    elif chart_type in {"line", "bar"}:
+        option = {
+            "tooltip": {"trigger": "axis"},
+            "grid": {"left": 48, "right": 24, "top": 28, "bottom": 52},
+            "xAxis": {"type": "category", "data": labels, "axisLabel": {"rotate": 24 if len(labels) > 8 else 0}},
+            "yAxis": {"type": "value"},
+            "series": [{"type": chart_type, "smooth": chart_type == "line", "barMaxWidth": 42, "data": values}],
+        }
+    else:
+        option = {}
+    return {"type": chart_type, "title": question, "xField": columns[0], "yField": columns[numeric_index], "option": option}
+
+
 def safe_select(sql: str) -> str:
     """Reject write/multi-statement SQL before it reaches a database or DuckDB."""
     candidate = sql.strip().rstrip(";").strip()
@@ -261,6 +344,22 @@ def heuristic_sql(question: str, catalog: TidbCatalog) -> str:
     table = "reporting.daily_sales"
     date_column = "stat_date"
     value_column = "gmv"
+    table_lookup = {item.name.lower(): (schema.name, item) for schema in catalog.schemas for item in schema.tables}
+    lowered = question.lower()
+    if "order_fact" in table_lookup:
+        schema = table_lookup["order_fact"][0]
+        orders = f"{schema}.order_fact"
+        if any(word in lowered for word in ("区域", "region")) and "customer_dim" in table_lookup:
+            customer_schema = table_lookup["customer_dim"][0]
+            return f"SELECT c.region, SUM(o.amount) AS total_value FROM {orders} o JOIN {customer_schema}.customer_dim c ON c.customer_id = o.customer_id GROUP BY c.region ORDER BY total_value DESC LIMIT 100"
+        if any(word in lowered for word in ("品类", "类别", "category")) and "product_dim" in table_lookup:
+            product_schema = table_lookup["product_dim"][0]
+            return f"SELECT p.category, SUM(o.amount) AS total_value FROM {orders} o JOIN {product_schema}.product_dim p ON p.product_id = o.product_id GROUP BY p.category ORDER BY total_value DESC LIMIT 100"
+        if any(word in lowered for word in ("渠道", "channel")):
+            return f"SELECT channel, SUM(amount) AS total_value FROM {orders} GROUP BY channel ORDER BY total_value DESC LIMIT 100"
+        if any(word in lowered for word in ("状态", "status")):
+            return f"SELECT status, COUNT(*) AS total_value FROM {orders} GROUP BY status ORDER BY total_value DESC LIMIT 100"
+
     for schema in catalog.schemas:
         for item in schema.tables:
             names = {column.name.lower() for column in item.columns}
@@ -269,7 +368,7 @@ def heuristic_sql(question: str, catalog: TidbCatalog) -> str:
                 value_column = "gmv" if "gmv" in names else "amount"
                 date_column = next((name for name in names if "date" in name or "created" in name), date_column)
                 break
-    if any(word in question.lower() for word in ("趋势", "trend", "每天", "按日")):
+    if any(word in lowered for word in ("趋势", "trend", "每天", "按日")):
         return f"SELECT {date_column}, SUM({value_column}) AS total_value FROM {table} GROUP BY {date_column} ORDER BY {date_column}"
     return f"SELECT {date_column}, SUM({value_column}) AS total_value FROM {table} GROUP BY {date_column} ORDER BY {date_column} LIMIT 100"
 
@@ -523,6 +622,35 @@ def dataset_query(dataset: Dataset, question: str) -> tuple[str, list[str], list
     return sql, [description[0] for description in connection.description], [list(row) for row in result]
 
 
+def catalog_from_database(item: DataSourceRecord, rows: list[dict[str, Any]]) -> TidbCatalog:
+    tables: dict[str, CatalogTable] = {}
+    for row in rows:
+        table_name = str(row.get("TABLE_NAME") or row.get("table_name") or "unknown")
+        table = tables.setdefault(table_name, CatalogTable(name=table_name, comment=row.get("TABLE_COMMENT") or row.get("table_comment")))
+        table.columns.append(
+            CatalogColumn(
+                name=str(row.get("COLUMN_NAME") or row.get("column_name")),
+                data_type=str(row.get("COLUMN_TYPE") or row.get("DATA_TYPE") or "unknown"),
+                comment=row.get("COLUMN_COMMENT") or row.get("column_comment"),
+                nullable=str(row.get("IS_NULLABLE") or "YES").upper() != "NO",
+            )
+        )
+    return TidbCatalog(
+        database=item.database or "tidb",
+        schemas=[CatalogSchema(name=item.database or "tidb", tables=list(tables.values()))],
+        relationships=[],
+        source=f"chatbi:{item.id}",
+        collected_at=now_iso(),
+    )
+
+
+def datasource_or_404(datasource_id: str) -> DataSourceRecord:
+    item = DATA_SOURCES.get(datasource_id)
+    if not item:
+        raise HTTPException(404, "datasource not found")
+    return item
+
+
 @app.get("/health", tags=["system"])
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "data-ai-explorer", "time": now_iso()}
@@ -546,6 +674,140 @@ async def tidb_mcp_introspect(payload: TidbMcpIntrospectRequest) -> TidbCatalog:
 @app.get("/api/v1/tidb/catalog", response_model=TidbCatalog, tags=["tidb"])
 def tidb_catalog() -> TidbCatalog:
     return CATALOG
+
+
+@app.get("/api/v1/chatbi/datasources", response_model=list[DataSourceRecord], tags=["chatbi"])
+def chatbi_datasources() -> list[DataSourceRecord]:
+    return list(reversed(list(DATA_SOURCES.values())))
+
+
+@app.post("/api/v1/chatbi/datasources", response_model=DataSourceRecord, status_code=201, tags=["chatbi"])
+def chatbi_create_datasource(payload: DataSourceCreate) -> DataSourceRecord:
+    item = create_database_source(payload)
+    if payload.test_on_create:
+        return test_database_source(item)
+    return item
+
+
+@app.post("/api/v1/chatbi/datasources/{datasource_id}/test", response_model=DataSourceRecord, tags=["chatbi"])
+def chatbi_test_datasource(datasource_id: str) -> DataSourceRecord:
+    return test_database_source(datasource_or_404(datasource_id))
+
+
+@app.delete("/api/v1/chatbi/datasources/{datasource_id}", status_code=204, tags=["chatbi"])
+def chatbi_delete_datasource(datasource_id: str) -> None:
+    if datasource_id not in DATA_SOURCES:
+        raise HTTPException(404, "datasource not found")
+    if datasource_id == "ds-demo-tidb":
+        raise HTTPException(400, "demo datasource cannot be deleted")
+    DATA_SOURCES.pop(datasource_id, None)
+    DATA_SOURCE_SECRETS.pop(datasource_id, None)
+
+
+@app.post("/api/v1/chatbi/datasources/upload", response_model=DataSourceRecord, status_code=201, tags=["chatbi"])
+async def chatbi_upload_datasource(file: UploadFile = File(...)) -> DataSourceRecord:
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in (".csv", ".parquet"):
+        raise HTTPException(415, "only .csv and .parquet files are supported")
+    target = DATASET_DIR / f"{uuid4().hex}{suffix}"
+    with target.open("wb") as output:
+        shutil.copyfileobj(file.file, output)
+    dataset = register_dataset(target, Path(file.filename or target.name).name)
+    return create_csv_source(dataset.name, dataset.id, dataset.rows)
+
+
+@app.post("/api/v1/chatbi/query", response_model=QueryOperation, status_code=202, tags=["chatbi"])
+async def chatbi_query(payload: ChatBIQuery) -> QueryOperation:
+    item = datasource_or_404(payload.datasource_id)
+    reject_dangerous_intent(payload.question)
+    source = item.kind
+    catalog = CATALOG
+    if item.id == "ds-demo-tidb":
+        sql = safe_select(await model_sql(payload.question, DEMO_CATALOG))
+        columns = ["stat_date", "total_value"]
+        rows = [["2026-08-17", 1213000], ["2026-08-18", 1286000]]
+        catalog = DEMO_CATALOG
+        source = "demo"
+    elif item.kind == "csv":
+        dataset = DATASETS.get(item.dataset_id or "")
+        if not dataset:
+            raise HTTPException(404, "dataset backing datasource not found")
+        sql, columns, rows = dataset_query(dataset, payload.question)
+        source = "duckdb"
+    else:
+        if item.status != "ready":
+            raise HTTPException(409, "datasource must pass connection test before querying")
+        try:
+            metadata, _ = inspect_database(item)
+            catalog = catalog_from_database(item, metadata)
+            sql = await model_sql(payload.question, catalog)
+            sql = safe_select(sql)
+            columns, rows = execute_database_select(item, sql)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(502, f"database query failed: {exc.__class__.__name__}") from exc
+        source = f"{item.kind}-direct"
+    operation = QueryOperation(
+        operation_id=f"op-{uuid4().hex[:10]}",
+        status="completed",
+        question=payload.question,
+        sql=sql,
+        answer="已完成只读分析。图表类型根据问题意图和结果字段自动选择，可认可后加入大屏。",
+        columns=columns,
+        rows=rows,
+        chart=await chatbi_chart_spec(payload.question, columns, rows),
+        evidence=[
+            {"type": "datasource", "label": item.name, "ref": item.id},
+            {"type": "catalog", "label": catalog.database, "ref": catalog.source},
+            {"type": "policy", "label": "read-only SQL guard", "ref": "sql-guard-v1"},
+            {"type": "engine", "label": source, "ref": source},
+        ],
+        created_at=now_iso(),
+    )
+    OPERATIONS[operation.operation_id] = operation
+    return operation
+
+
+@app.get("/api/v1/chatbi/reports", response_model=list[DashboardReport], tags=["chatbi"])
+def chatbi_reports() -> list[DashboardReport]:
+    return list(reversed(list(DASHBOARD_REPORTS.values())))
+
+
+@app.post("/api/v1/chatbi/reports", response_model=DashboardReport, status_code=201, tags=["chatbi"])
+def chatbi_create_report(payload: ReportCreate) -> DashboardReport:
+    operation = OPERATIONS.get(payload.operation_id)
+    item = datasource_or_404(payload.datasource_id)
+    if not operation:
+        raise HTTPException(404, "query operation not found")
+    if operation.status != "completed":
+        raise HTTPException(409, "only completed query can be added to dashboard")
+    if not any(evidence.get("type") == "datasource" and evidence.get("ref") == item.id for evidence in operation.evidence):
+        raise HTTPException(409, "query operation does not belong to datasource")
+    existing = next((report for report in DASHBOARD_REPORTS.values() if report.operation_id == operation.operation_id), None)
+    if existing:
+        return existing
+    report = DashboardReport(
+        id=f"rpt-{uuid4().hex[:10]}",
+        operation_id=operation.operation_id,
+        datasource_id=item.id,
+        datasource_name=item.name,
+        title=payload.title,
+        question=operation.question,
+        chart=operation.chart or {"type": "table", "title": payload.title, "option": {}},
+        columns=operation.columns,
+        rows=operation.rows,
+        accepted_by="林工",
+        created_at=now_iso(),
+    )
+    DASHBOARD_REPORTS[report.id] = report
+    return report
+
+
+@app.delete("/api/v1/chatbi/reports/{report_id}", status_code=204, tags=["chatbi"])
+def chatbi_delete_report(report_id: str) -> None:
+    if not DASHBOARD_REPORTS.pop(report_id, None):
+        raise HTTPException(404, "dashboard report not found")
 
 
 @app.post("/api/v1/query/conversations", response_model=QueryOperation, status_code=202, tags=["query"])

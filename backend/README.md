@@ -32,6 +32,16 @@ OpenAPI is available at http://localhost:8080/docs. The API is prefixed with `/a
 - `POST /api/v1/datasets/local-directory`: scan an allowlisted machine directory. Configure `DATASET_ALLOWED_ROOTS`; arbitrary paths are rejected.
 - `POST /api/v1/datasets/analyze`: query registered files through DuckDB and return rows plus an ECharts option.
 
+### ChatBI operational flow
+
+- `GET/POST /api/v1/chatbi/datasources`: list or add TiDB/MySQL connections. Passwords are held separately in process memory and never returned by the API.
+- `POST /api/v1/chatbi/datasources/{id}/test`: read `information_schema` to verify access and collect table/column comments.
+- `POST /api/v1/chatbi/datasources/upload`: register a CSV/Parquet file as a selectable ChatBI datasource.
+- `POST /api/v1/chatbi/query`: generate guarded read-only SQL, execute it through TiDB/MySQL or DuckDB, and return an AI-selected ECharts specification.
+- `GET/POST /api/v1/chatbi/reports`: list or accept a completed analysis for the dashboard. `DELETE /api/v1/chatbi/reports/{id}` removes it.
+
+Direct database hosts must match `CHATBI_ALLOWED_DB_HOSTS`, or resolve only to private/loopback addresses when `CHATBI_ALLOW_PRIVATE_HOSTS=true`. Production deployments should set the private-host fallback to `false`, configure exact hosts, store credentials in a secret manager, and replace the in-memory records with persistent encrypted storage.
+
 ## TiDB SQL Optimizer APIs
 
 - `GET /api/v1/aiops/sql-optimizer/versions`: list the version profiles for TiDB 7.5 and 8.0-8.5, including source tag, commit and relevant optimizer capabilities.

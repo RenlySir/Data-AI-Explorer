@@ -46,6 +46,12 @@ import {
   LockKeyhole,
   Save,
   SlidersHorizontal,
+  PlugZap,
+  Server,
+  FileSpreadsheet,
+  MonitorUp,
+  PanelsTopLeft,
+  Trash2,
 } from "lucide-react";
 import "./styles.css";
 import "./optimizer.css";
@@ -53,6 +59,7 @@ import "./scenarios.css";
 import "./knowledge.css";
 import "./capabilities.css";
 import "./polish.css";
+import "./chatbi.css";
 
 type Page =
   | "workbench"
@@ -119,6 +126,35 @@ type Dataset = {
   path: string;
   rows: number;
   columns: { name: string; type: string }[];
+  created_at: string;
+};
+type DataSourceRecord = {
+  id: string;
+  name: string;
+  kind: "mysql" | "tidb" | "csv";
+  status: "ready" | "unverified" | "error";
+  host?: string;
+  port?: number;
+  database?: string;
+  username?: string;
+  dataset_id?: string;
+  table_count: number;
+  row_count?: number;
+  last_error?: string;
+  created_at: string;
+  last_tested_at?: string;
+};
+type DashboardReport = {
+  id: string;
+  operation_id: string;
+  datasource_id: string;
+  datasource_name: string;
+  title: string;
+  question: string;
+  chart: { type: string; title: string; option?: EChartsOption };
+  columns: string[];
+  rows: unknown[][];
+  accepted_by: string;
   created_at: string;
 };
 type OptimizerVersion = {
@@ -281,7 +317,7 @@ type ProductModule = {
   features: ProductFeature[];
 };
 const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api/v1"
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:18082/api/v1"
 ).replace(/\/$/, "");
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const isMultipart =
@@ -366,15 +402,24 @@ function Login({ onLogin }: { onLogin: () => void }) {
           <div className="login-capability-list">
             <div>
               <MessageSquare size={18} />
-              <span><b>智能分析</b><small>自然语言问数与可解释 SQL</small></span>
+              <span>
+                <b>智能分析</b>
+                <small>自然语言问数与可解释 SQL</small>
+              </span>
             </div>
             <div>
               <BookOpen size={18} />
-              <span><b>企业知识</b><small>受控检索、引用与知识治理</small></span>
+              <span>
+                <b>企业知识</b>
+                <small>受控检索、引用与知识治理</small>
+              </span>
             </div>
             <div>
               <Activity size={18} />
-              <span><b>运维协同</b><small>事件诊断、审批与场景编排</small></span>
+              <span>
+                <b>运维协同</b>
+                <small>事件诊断、审批与场景编排</small>
+              </span>
             </div>
           </div>
           <div className="login-brand-foot">
@@ -382,24 +427,54 @@ function Login({ onLogin }: { onLogin: () => void }) {
           </div>
         </section>
         <section className="login-form-panel">
-          <form className="login-card" onSubmit={(event) => { event.preventDefault(); onLogin(); }}>
+          <form
+            className="login-card"
+            onSubmit={(event) => {
+              event.preventDefault();
+              onLogin();
+            }}
+          >
             <div className="login-form-head">
               <span className="login-kicker">欢迎回来</span>
               <h2>登录工作台</h2>
               <p>使用企业账号进入当前工作空间。</p>
             </div>
             <label htmlFor="login-email">企业账号</label>
-            <input id="login-email" type="email" autoComplete="username" placeholder="name@company.com" defaultValue="admin@acme.com" required />
+            <input
+              id="login-email"
+              type="email"
+              autoComplete="username"
+              placeholder="name@company.com"
+              defaultValue="admin@acme.com"
+              required
+            />
             <label htmlFor="login-password">密码</label>
-            <input id="login-password" type="password" autoComplete="current-password" defaultValue="12345678" required onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onLogin(); } }} />
+            <input
+              id="login-password"
+              type="password"
+              autoComplete="current-password"
+              defaultValue="12345678"
+              required
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  onLogin();
+                }
+              }}
+            />
             <div className="login-environment">
               <span className="status-dot" />
-              <span><b>本地演示环境</b><small>数据不会发送到外部服务</small></span>
+              <span>
+                <b>本地演示环境</b>
+                <small>数据不会发送到外部服务</small>
+              </span>
             </div>
             <button className="primary wide" type="submit">
               登录工作台 <ArrowUpRight size={16} />
             </button>
-            <small className="login-help">登录即表示你已同意企业安全与审计策略</small>
+            <small className="login-help">
+              登录即表示你已同意企业安全与审计策略
+            </small>
           </form>
         </section>
       </div>
@@ -417,26 +492,52 @@ function App() {
   type NavItem = [Page, string, React.ComponentType<{ size?: number }>];
   type NavGroup = [string, NavItem[]];
   const navGroups: NavGroup[] = [
-    ["总览", [["workbench", "工作台", LayoutDashboard], ["capabilities", "功能中心", ListChecks]]],
-    ["数据智能", [["query", "智能问数", MessageSquare], ["knowledge", "知识库", BookOpen], ["assets", "数据资产", Database], ["catalog", "TiDB 结构", Network]]],
-    ["运维协同", [["incidents", "AIOps 事件", Activity], ["sql-optimizer", "SQL 优化", WandSparkles], ["scenarios", "场景中心", Workflow]]],
+    [
+      "总览",
+      [
+        ["workbench", "工作台", LayoutDashboard],
+        ["capabilities", "功能中心", ListChecks],
+      ],
+    ],
+    [
+      "数据智能",
+      [
+        ["query", "智能问数", MessageSquare],
+        ["knowledge", "知识库", BookOpen],
+        ["assets", "数据资产", Database],
+        ["catalog", "TiDB 结构", Network],
+      ],
+    ],
+    [
+      "运维协同",
+      [
+        ["incidents", "AIOps 事件", Activity],
+        ["sql-optimizer", "SQL 优化", WandSparkles],
+        ["scenarios", "场景中心", Workflow],
+      ],
+    ],
   ];
   const nav = navGroups.flatMap(([, items]) => items);
   const activeGroup = navGroups.find(([, items]) =>
     items.some(([id]) => id === page),
   )?.[0];
-  const pageTitle = page === "settings" ? "系统设置" : nav.find((item) => item[0] === page)?.[1];
+  const pageTitle =
+    page === "settings"
+      ? "系统设置"
+      : nav.find((item) => item[0] === page)?.[1];
   const navigatePage = (next: Page) => {
     setPage(next);
     const nextHash = `#/${next}`;
-    if (window.location.hash !== nextHash) window.history.pushState({ page: next }, "", nextHash);
+    if (window.location.hash !== nextHash)
+      window.history.pushState({ page: next }, "", nextHash);
   };
   const openQuery = (question = "") => {
     setQuerySeed(question);
     navigatePage("query");
   };
   useEffect(() => {
-    if (!window.location.hash) window.history.replaceState({ page }, "", `#/${page}`);
+    if (!window.location.hash)
+      window.history.replaceState({ page }, "", `#/${page}`);
     const handleHistory = () => setPage(pageFromLocation());
     window.addEventListener("popstate", handleHistory);
     return () => window.removeEventListener("popstate", handleHistory);
@@ -474,11 +575,17 @@ function App() {
       <aside className="app-sidebar">
         <div className="logo">
           <span>A</span>
-          <div><b>Aegis AI</b><small>Control Plane</small></div>
+          <div>
+            <b>Aegis AI</b>
+            <small>Control Plane</small>
+          </div>
         </div>
         <div className="workspace-switch">
           <Building2 size={17} />
-          <span><small>当前工作区</small><b>本地演示空间</b></span>
+          <span>
+            <small>当前工作区</small>
+            <b>本地演示空间</b>
+          </span>
         </div>
         <nav className="sidebar-nav" aria-label="产品导航">
           {navGroups.map(([group, items]) => (
@@ -490,7 +597,9 @@ function App() {
                   aria-label={label}
                   aria-current={page === id ? "page" : undefined}
                   title={label}
-                  onClick={() => id === "query" ? openQuery() : navigatePage(id)}
+                  onClick={() =>
+                    id === "query" ? openQuery() : navigatePage(id)
+                  }
                   key={id}
                 >
                   <Icon size={18} />
@@ -515,7 +624,10 @@ function App() {
             className="nav"
             aria-label="退出登录"
             title="退出登录"
-            onClick={() => { setLogged(false); navigatePage("workbench"); }}
+            onClick={() => {
+              setLogged(false);
+              navigatePage("workbench");
+            }}
           >
             <LogOut size={18} />
             <span className="nav-label">退出登录</span>
@@ -528,16 +640,35 @@ function App() {
             <span className="eyebrow">{activeGroup || "平台管理"}</span>
             <h2>{pageTitle}</h2>
           </div>
-          <button className="global-search" onClick={() => { setFocusCapabilitySearch(true); navigatePage("capabilities"); }}>
+          <button
+            className="global-search"
+            onClick={() => {
+              setFocusCapabilitySearch(true);
+              navigatePage("capabilities");
+            }}
+          >
             <Search size={16} />
             <span>搜索功能、场景或数据</span>
           </button>
           <div className="user topbar-actions">
-            <span className="environment-badge"><span className="status-dot" />本地演示</span>
-            <button className="topbar-icon" aria-label="通知" title="通知" onClick={() => setNotice("当前没有未读通知")}><Bell size={18} /></button>
+            <span className="environment-badge">
+              <span className="status-dot" />
+              本地演示
+            </span>
+            <button
+              className="topbar-icon"
+              aria-label="通知"
+              title="通知"
+              onClick={() => setNotice("当前没有未读通知")}
+            >
+              <Bell size={18} />
+            </button>
             <div className="account-chip">
               <div className="avatar">林</div>
-              <span><b>林工</b><small>平台管理员</small></span>
+              <span>
+                <b>林工</b>
+                <small>平台管理员</small>
+              </span>
             </div>
           </div>
         </header>
@@ -550,16 +681,27 @@ function App() {
             </button>
           </div>
         )}
-        {page === "workbench" && <Workbench setPage={navigatePage} openQuery={openQuery} />} {" "}
-        {page === "capabilities" && <CapabilityCenter setPage={navigatePage} focusSearch={focusCapabilitySearch} />} {" "}
-        {page === "query" && (
-          <QueryV2 catalog={catalog} loadCatalog={loadCatalog} initialQuestion={querySeed} />
+        {page === "workbench" && (
+          <Workbench setPage={navigatePage} openQuery={openQuery} />
         )}{" "}
-        {page === "incidents" && <Incidents setPage={navigatePage} />} {" "}
+        {page === "capabilities" && (
+          <CapabilityCenter
+            setPage={navigatePage}
+            focusSearch={focusCapabilitySearch}
+          />
+        )}{" "}
+        {page === "query" && (
+          <QueryV2
+            catalog={catalog}
+            loadCatalog={loadCatalog}
+            initialQuestion={querySeed}
+          />
+        )}{" "}
+        {page === "incidents" && <Incidents setPage={navigatePage} />}{" "}
         {page === "scenarios" && <ScenarioCenter />}{" "}
         {page === "knowledge" && <KnowledgeBasePage />}{" "}
         {page === "sql-optimizer" && <SQLOptimizerPage />}{" "}
-        {page === "assets" && <AssetsV2 setPage={navigatePage} />} {" "}
+        {page === "assets" && <AssetsV2 setPage={navigatePage} />}{" "}
         {page === "catalog" && (
           <CatalogPage
             catalog={catalog}
@@ -572,7 +714,13 @@ function App() {
     </div>
   );
 }
-function CapabilityCenter({ setPage, focusSearch = false }: { setPage: (page: Page) => void; focusSearch?: boolean }) {
+function CapabilityCenter({
+  setPage,
+  focusSearch = false,
+}: {
+  setPage: (page: Page) => void;
+  focusSearch?: boolean;
+}) {
   const [modules, setModules] = useState<ProductModule[]>([]);
   const [selectedModuleId, setSelectedModuleId] = useState("");
   const [selectedFeatureId, setSelectedFeatureId] = useState("");
@@ -587,7 +735,9 @@ function CapabilityCenter({ setPage, focusSearch = false }: { setPage: (page: Pa
   const detailRef = useRef<HTMLDivElement>(null);
   const advanceOnMobile = (target: React.RefObject<HTMLDivElement | null>) => {
     if (window.matchMedia("(max-width: 700px)").matches) {
-      window.requestAnimationFrame(() => target.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      window.requestAnimationFrame(() =>
+        target.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      );
     }
   };
 
@@ -714,9 +864,7 @@ function CapabilityCenter({ setPage, focusSearch = false }: { setPage: (page: Pa
           value={state}
           onChange={(event) =>
             setState(
-              event.target.value as
-                | "all"
-                | ProductFeature["delivery_state"],
+              event.target.value as "all" | ProductFeature["delivery_state"],
             )
           }
           aria-label="按交付状态筛选"
@@ -727,8 +875,17 @@ function CapabilityCenter({ setPage, focusSearch = false }: { setPage: (page: Pa
           <option value="planned">待生产接入</option>
         </select>
         {(search || role !== "all" || state !== "all") && (
-          <button className="secondary capability-reset" onClick={() => { setSearch(""); setRole("all"); setState("all"); searchRef.current?.focus(); }}>
-            <X size={14} />清除筛选
+          <button
+            className="secondary capability-reset"
+            onClick={() => {
+              setSearch("");
+              setRole("all");
+              setState("all");
+              searchRef.current?.focus();
+            }}
+          >
+            <X size={14} />
+            清除筛选
           </button>
         )}
       </div>
@@ -777,7 +934,10 @@ function CapabilityCenter({ setPage, focusSearch = false }: { setPage: (page: Pa
                   ? "capability-feature active"
                   : "capability-feature"
               }
-              onClick={() => { setSelectedFeatureId(item.id); advanceOnMobile(detailRef); }}
+              onClick={() => {
+                setSelectedFeatureId(item.id);
+                advanceOnMobile(detailRef);
+              }}
             >
               <span>
                 <b>{item.name}</b>
@@ -867,7 +1027,13 @@ function CapabilityFact({ title, items }: { title: string; items: string[] }) {
     </div>
   );
 }
-function Workbench({ setPage, openQuery }: { setPage: (p: Page) => void; openQuery: (question?: string) => void }) {
+function Workbench({
+  setPage,
+  openQuery,
+}: {
+  setPage: (p: Page) => void;
+  openQuery: (question?: string) => void;
+}) {
   const today = new Intl.DateTimeFormat("zh-CN", {
     month: "long",
     day: "numeric",
@@ -881,9 +1047,15 @@ function Workbench({ setPage, openQuery }: { setPage: (p: Page) => void; openQue
           <h1>早上好，林工</h1>
           <p>今日重点已按风险和业务影响排序，可以从待办直接进入处置。</p>
           <div className="hero-signals">
-            <span><span className="status-dot" /> 核心服务正常</span>
-            <span><ShieldCheck size={14} /> 只读安全策略已启用</span>
-            <span><Gauge size={14} /> 数据更新于 2 分钟前</span>
+            <span>
+              <span className="status-dot" /> 核心服务正常
+            </span>
+            <span>
+              <ShieldCheck size={14} /> 只读安全策略已启用
+            </span>
+            <span>
+              <Gauge size={14} /> 数据更新于 2 分钟前
+            </span>
           </div>
         </div>
         <div className="welcome-actions">
@@ -917,12 +1089,23 @@ function Workbench({ setPage, openQuery }: { setPage: (p: Page) => void; openQue
         />
       </div>
       <div className="workbench-section-label">
-        <div><span className="eyebrow">快捷入口</span><h2>开始一项工作</h2></div>
-        <button className="text-btn" onClick={() => setPage("capabilities")}>浏览全部 60 项功能 <ChevronRight size={14} /></button>
+        <div>
+          <span className="eyebrow">快捷入口</span>
+          <h2>开始一项工作</h2>
+        </div>
+        <button className="text-btn" onClick={() => setPage("capabilities")}>
+          浏览全部 63 项功能 <ChevronRight size={14} />
+        </button>
       </div>
       <div className="workbench-tasks" aria-label="常用工作">
         {[
-          ["query", "数据分析", "经营数据分析", "自然语言转 SQL 并生成图表", MessageSquare],
+          [
+            "query",
+            "数据分析",
+            "经营数据分析",
+            "自然语言转 SQL 并生成图表",
+            MessageSquare,
+          ],
           [
             "knowledge",
             "知识检索",
@@ -965,7 +1148,13 @@ function Workbench({ setPage, openQuery }: { setPage: (p: Page) => void; openQue
       <div className="grid-two">
         <div className="panel attention-panel">
           <div className="panel-head">
-            <div className="panel-title"><CircleAlert size={17} /><span><h3>需要关注</h3><small>按业务影响排序</small></span></div>
+            <div className="panel-title">
+              <CircleAlert size={17} />
+              <span>
+                <h3>需要关注</h3>
+                <small>按业务影响排序</small>
+              </span>
+            </div>
             <button className="text-btn" onClick={() => setPage("incidents")}>
               查看全部 <ChevronRight size={14} />
             </button>
@@ -987,8 +1176,14 @@ function Workbench({ setPage, openQuery }: { setPage: (p: Page) => void; openQue
         </div>
         <div className="panel recent-panel">
           <div className="panel-head">
-            <div className="panel-title"><Clock3 size={17} /><span><h3>最近问数</h3><small>可继续追问或复用结果</small></span></div>
-              <button className="text-btn" onClick={() => openQuery()}>
+            <div className="panel-title">
+              <Clock3 size={17} />
+              <span>
+                <h3>最近问数</h3>
+                <small>可继续追问或复用结果</small>
+              </span>
+            </div>
+            <button className="text-btn" onClick={() => openQuery()}>
               新建问题 <ChevronRight size={14} />
             </button>
           </div>
@@ -997,7 +1192,11 @@ function Workbench({ setPage, openQuery }: { setPage: (p: Page) => void; openQue
             "订单取消率最高的商品品类",
             "本月新客留存率",
           ].map((x, i) => (
-            <button className="query-row query-history-button" key={x} onClick={() => openQuery(x)}>
+            <button
+              className="query-row query-history-button"
+              key={x}
+              onClick={() => openQuery(x)}
+            >
               <MessageSquare size={15} />
               <span>{x}</span>
               <small>{i + 1} 小时前</small>
@@ -1022,7 +1221,10 @@ function Metric({
 }) {
   return (
     <div className={`metric metric-${tone}`}>
-      <div className="metric-head"><span>{label}</span><i /></div>
+      <div className="metric-head">
+        <span>{label}</span>
+        <i />
+      </div>
       <strong className={tone}>{value}</strong>
       <small>{hint}</small>
     </div>
@@ -1047,70 +1249,183 @@ function SettingsPage() {
         <div>
           <span className="eyebrow">工作空间 · 模型 · 连接 · 安全</span>
           <h1>系统设置</h1>
-          <p className="section-subtitle">管理当前工作空间的基础配置和本地集成边界。</p>
+          <p className="section-subtitle">
+            管理当前工作空间的基础配置和本地集成边界。
+          </p>
         </div>
-        <span className="environment-badge"><span className="status-dot" />本地演示</span>
+        <span className="environment-badge">
+          <span className="status-dot" />
+          本地演示
+        </span>
       </div>
       {feedback && (
         <div className="notice settings-notice">
-          <CheckCircle2 size={15} />{feedback}
-          <button onClick={() => setFeedback("")} aria-label="关闭提示"><X size={14} /></button>
+          <CheckCircle2 size={15} />
+          {feedback}
+          <button onClick={() => setFeedback("")} aria-label="关闭提示">
+            <X size={14} />
+          </button>
         </div>
       )}
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="设置分类">
           {sections.map(([id, label, Icon]) => (
-            <button key={id} className={section === id ? "active" : ""} onClick={() => { setSection(id); setFeedback(""); }}>
-              <Icon size={17} /><span>{label}</span><ChevronRight size={15} />
+            <button
+              key={id}
+              className={section === id ? "active" : ""}
+              onClick={() => {
+                setSection(id);
+                setFeedback("");
+              }}
+            >
+              <Icon size={17} />
+              <span>{label}</span>
+              <ChevronRight size={15} />
             </button>
           ))}
         </nav>
         <div className="panel settings-panel">
           {section === "general" && (
             <>
-              <SettingsHeader title="基础设置" description="工作空间名称、语言和时间展示规则。" />
+              <SettingsHeader
+                title="基础设置"
+                description="工作空间名称、语言和时间展示规则。"
+              />
               <div className="settings-form-grid">
-                <SettingsField label="工作空间名称"><input defaultValue="本地演示空间" /></SettingsField>
-                <SettingsField label="默认语言"><select defaultValue="zh-CN"><option value="zh-CN">简体中文</option><option value="en-US">English</option></select></SettingsField>
-                <SettingsField label="时区"><select defaultValue="Asia/Shanghai"><option>Asia/Shanghai</option><option>UTC</option></select></SettingsField>
-                <SettingsField label="数据保留期"><select defaultValue="90"><option value="30">30 天</option><option value="90">90 天</option><option value="180">180 天</option></select></SettingsField>
+                <SettingsField label="工作空间名称">
+                  <input defaultValue="本地演示空间" />
+                </SettingsField>
+                <SettingsField label="默认语言">
+                  <select defaultValue="zh-CN">
+                    <option value="zh-CN">简体中文</option>
+                    <option value="en-US">English</option>
+                  </select>
+                </SettingsField>
+                <SettingsField label="时区">
+                  <select defaultValue="Asia/Shanghai">
+                    <option>Asia/Shanghai</option>
+                    <option>UTC</option>
+                  </select>
+                </SettingsField>
+                <SettingsField label="数据保留期">
+                  <select defaultValue="90">
+                    <option value="30">30 天</option>
+                    <option value="90">90 天</option>
+                    <option value="180">180 天</option>
+                  </select>
+                </SettingsField>
               </div>
-              <SettingsSave onClick={() => complete("基础设置已保存在当前会话")} />
+              <SettingsSave
+                onClick={() => complete("基础设置已保存在当前会话")}
+              />
             </>
           )}
           {section === "model" && (
             <>
-              <SettingsHeader title="模型网关" description="统一接入 OpenAI-Compatible、Ollama、vLLM 和企业自建模型。" />
+              <SettingsHeader
+                title="模型网关"
+                description="统一接入 OpenAI-Compatible、Ollama、vLLM 和企业自建模型。"
+              />
               <div className="settings-form-grid">
-                <SettingsField label="网关地址" wide><input defaultValue="http://host.docker.internal:11434" /></SettingsField>
-                <SettingsField label="默认模型"><input placeholder="例如 qwen2.5:14b" /></SettingsField>
-                <SettingsField label="调用策略"><select defaultValue="local"><option value="local">仅本地模型</option><option value="policy">按数据策略路由</option></select></SettingsField>
+                <SettingsField label="网关地址" wide>
+                  <input defaultValue="http://host.docker.internal:11434" />
+                </SettingsField>
+                <SettingsField label="默认模型">
+                  <input placeholder="例如 qwen2.5:14b" />
+                </SettingsField>
+                <SettingsField label="调用策略">
+                  <select defaultValue="local">
+                    <option value="local">仅本地模型</option>
+                    <option value="policy">按数据策略路由</option>
+                  </select>
+                </SettingsField>
               </div>
-              <div className="settings-security-note"><ShieldCheck size={16} /><span><b>凭证安全</b><small>API Key 仅保存凭证引用，页面不会回显密钥。</small></span></div>
-              <div className="settings-actions"><button className="secondary" onClick={() => complete("模型网关连通性检查通过")}>测试连接</button><SettingsSave onClick={() => complete("模型网关配置已保存在当前会话")} /></div>
+              <div className="settings-security-note">
+                <ShieldCheck size={16} />
+                <span>
+                  <b>凭证安全</b>
+                  <small>API Key 仅保存凭证引用，页面不会回显密钥。</small>
+                </span>
+              </div>
+              <div className="settings-actions">
+                <button
+                  className="secondary"
+                  onClick={() => complete("模型网关连通性检查通过")}
+                >
+                  测试连接
+                </button>
+                <SettingsSave
+                  onClick={() => complete("模型网关配置已保存在当前会话")}
+                />
+              </div>
             </>
           )}
           {section === "connectors" && (
             <>
-              <SettingsHeader title="数据连接" description="配置 TiDB MCP 与本地受控目录，连接默认只读。" />
+              <SettingsHeader
+                title="数据连接"
+                description="配置 TiDB MCP 与本地受控目录，连接默认只读。"
+              />
               <div className="settings-form-grid">
-                <SettingsField label="TiDB MCP Endpoint" wide><input defaultValue="demo://tidb" /></SettingsField>
-                <SettingsField label="允许读取的目录" wide><input defaultValue="/workspace/data" /></SettingsField>
+                <SettingsField label="TiDB MCP Endpoint" wide>
+                  <input defaultValue="demo://tidb" />
+                </SettingsField>
+                <SettingsField label="允许读取的目录" wide>
+                  <input defaultValue="/workspace/data" />
+                </SettingsField>
               </div>
-              <div className="connector-health-row"><span><span className="status-dot" />TiDB MCP</span><b>已连接</b><small>2 个 Schema</small></div>
-              <SettingsSave onClick={() => complete("数据连接配置已保存在当前会话")} />
+              <div className="connector-health-row">
+                <span>
+                  <span className="status-dot" />
+                  TiDB MCP
+                </span>
+                <b>已连接</b>
+                <small>2 个 Schema</small>
+              </div>
+              <SettingsSave
+                onClick={() => complete("数据连接配置已保存在当前会话")}
+              />
             </>
           )}
           {section === "security" && (
             <>
-              <SettingsHeader title="安全策略" description="本地演示默认启用只读查询、操作审计和目录白名单。" />
+              <SettingsHeader
+                title="安全策略"
+                description="本地演示默认启用只读查询、操作审计和目录白名单。"
+              />
               <div className="settings-toggle-list">
-                <label><span><b>只读 SQL</b><small>阻止 INSERT、UPDATE、DELETE 与 DDL</small></span><input type="checkbox" defaultChecked /></label>
-                <label><span><b>操作审计</b><small>记录人员、输入、策略结果和追踪 ID</small></span><input type="checkbox" defaultChecked /></label>
-                <label><span><b>高风险操作审批</b><small>执行前等待具有权限的审批人确认</small></span><input type="checkbox" defaultChecked /></label>
-                <label><span><b>仅允许本地模型</b><small>禁止数据发送至公网模型服务</small></span><input type="checkbox" /></label>
+                <label>
+                  <span>
+                    <b>只读 SQL</b>
+                    <small>阻止 INSERT、UPDATE、DELETE 与 DDL</small>
+                  </span>
+                  <input type="checkbox" defaultChecked />
+                </label>
+                <label>
+                  <span>
+                    <b>操作审计</b>
+                    <small>记录人员、输入、策略结果和追踪 ID</small>
+                  </span>
+                  <input type="checkbox" defaultChecked />
+                </label>
+                <label>
+                  <span>
+                    <b>高风险操作审批</b>
+                    <small>执行前等待具有权限的审批人确认</small>
+                  </span>
+                  <input type="checkbox" defaultChecked />
+                </label>
+                <label>
+                  <span>
+                    <b>仅允许本地模型</b>
+                    <small>禁止数据发送至公网模型服务</small>
+                  </span>
+                  <input type="checkbox" />
+                </label>
               </div>
-              <SettingsSave onClick={() => complete("安全策略已保存在当前会话")} />
+              <SettingsSave
+                onClick={() => complete("安全策略已保存在当前会话")}
+              />
             </>
           )}
         </div>
@@ -1119,16 +1434,46 @@ function SettingsPage() {
   );
 }
 
-function SettingsHeader({ title, description }: { title: string; description: string }) {
-  return <div className="settings-panel-head"><span className="eyebrow">当前工作空间</span><h2>{title}</h2><p>{description}</p></div>;
+function SettingsHeader({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="settings-panel-head">
+      <span className="eyebrow">当前工作空间</span>
+      <h2>{title}</h2>
+      <p>{description}</p>
+    </div>
+  );
 }
 
-function SettingsField({ label, wide = false, children }: { label: string; wide?: boolean; children: React.ReactNode }) {
-  return <label className={wide ? "settings-field wide-field" : "settings-field"}><span>{label}</span>{children}</label>;
+function SettingsField({
+  label,
+  wide = false,
+  children,
+}: {
+  label: string;
+  wide?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className={wide ? "settings-field wide-field" : "settings-field"}>
+      <span>{label}</span>
+      {children}
+    </label>
+  );
 }
 
 function SettingsSave({ onClick }: { onClick: () => void }) {
-  return <button className="primary settings-save" onClick={onClick}><Save size={16} />保存设置</button>;
+  return (
+    <button className="primary settings-save" onClick={onClick}>
+      <Save size={16} />
+      保存设置
+    </button>
+  );
 }
 function Query({
   query,
@@ -1216,7 +1561,9 @@ function Incidents({ setPage }: { setPage: (page: Page) => void }) {
   const [filter, setFilter] = useState("全部");
   const [selectedId, setSelectedId] = useState("");
   const [message, setMessage] = useState("");
-  const visibleIncidents = incidents.filter((item) => filter === "全部" || item.status === filter);
+  const visibleIncidents = incidents.filter(
+    (item) => filter === "全部" || item.status === filter,
+  );
   const selectedIncident = incidents.find((item) => item.id === selectedId);
   return (
     <section className="content incident-page">
@@ -1225,40 +1572,118 @@ function Incidents({ setPage }: { setPage: (page: Page) => void }) {
           <span className="eyebrow">实时监控 · 过去 24 小时</span>
           <h1>事件中心</h1>
         </div>
-        <button className="secondary" onClick={() => setMessage("当前事件已全部标记为已读")}>
+        <button
+          className="secondary"
+          onClick={() => setMessage("当前事件已全部标记为已读")}
+        >
           <CheckCircle2 size={16} />
           标记已读
         </button>
       </div>
-      {message && <div className="notice inline-notice"><CheckCircle2 size={15} />{message}<button onClick={() => setMessage("")} aria-label="关闭提示"><X size={14} /></button></div>}
+      {message && (
+        <div className="notice inline-notice">
+          <CheckCircle2 size={15} />
+          {message}
+          <button onClick={() => setMessage("")} aria-label="关闭提示">
+            <X size={14} />
+          </button>
+        </div>
+      )}
       <div className="filters">
         {["全部", "待处理", "处理中", "已恢复"].map((item) => (
-          <button className={filter === item ? "filter active" : "filter"} onClick={() => { setFilter(item); setSelectedId(""); }} key={item}>
-            {item} <b>{item === "全部" ? incidents.length : incidents.filter((incident) => incident.status === item).length}</b>
+          <button
+            className={filter === item ? "filter active" : "filter"}
+            onClick={() => {
+              setFilter(item);
+              setSelectedId("");
+            }}
+            key={item}
+          >
+            {item}{" "}
+            <b>
+              {item === "全部"
+                ? incidents.length
+                : incidents.filter((incident) => incident.status === item)
+                    .length}
+            </b>
           </button>
         ))}
       </div>
       <div className="incident-layout">
         <div className="panel incident-list">
           {visibleIncidents.map((i) => (
-            <button className={selectedId === i.id ? "incident incident-button selected" : "incident incident-button"} key={i.id} onClick={() => setSelectedId(i.id)}>
-              <div className={"severity " + i.severity.toLowerCase()}>{i.severity}</div>
-              <div className="row-main"><b>{i.title}</b><span>{i.id} · {i.service}</span></div>
+            <button
+              className={
+                selectedId === i.id
+                  ? "incident incident-button selected"
+                  : "incident incident-button"
+              }
+              key={i.id}
+              onClick={() => setSelectedId(i.id)}
+            >
+              <div className={"severity " + i.severity.toLowerCase()}>
+                {i.severity}
+              </div>
+              <div className="row-main">
+                <b>{i.title}</b>
+                <span>
+                  {i.id} · {i.service}
+                </span>
+              </div>
               <span className="chip">{i.status}</span>
               <small>{i.time}</small>
               <ChevronRight size={17} />
             </button>
           ))}
-          {!visibleIncidents.length && <div className="empty">当前筛选下没有事件</div>}
+          {!visibleIncidents.length && (
+            <div className="empty">当前筛选下没有事件</div>
+          )}
         </div>
         {selectedIncident && (
           <div className="panel incident-detail" aria-label="事件详情">
-            <div className="incident-detail-head"><div className={"severity " + selectedIncident.severity.toLowerCase()}>{selectedIncident.severity}</div><button className="icon-button" onClick={() => setSelectedId("")} aria-label="关闭详情"><X size={16} /></button></div>
+            <div className="incident-detail-head">
+              <div
+                className={
+                  "severity " + selectedIncident.severity.toLowerCase()
+                }
+              >
+                {selectedIncident.severity}
+              </div>
+              <button
+                className="icon-button"
+                onClick={() => setSelectedId("")}
+                aria-label="关闭详情"
+              >
+                <X size={16} />
+              </button>
+            </div>
             <span className="eyebrow">{selectedIncident.id}</span>
             <h2>{selectedIncident.title}</h2>
-            <p>{selectedIncident.service} 在 {selectedIncident.time} 触发异常，需要结合监控证据完成影响确认和根因分析。</p>
-            <div className="incident-facts"><span><b>当前状态</b>{selectedIncident.status}</span><span><b>建议动作</b>先分析证据，再决定是否执行 Runbook</span></div>
-            <div className="incident-detail-actions"><button className="secondary" onClick={() => setMessage("已领取事件，状态进入处理中")}>领取事件</button><button className="primary" onClick={() => setPage("scenarios")}><Workflow size={15} />启动作战室</button></div>
+            <p>
+              {selectedIncident.service} 在 {selectedIncident.time}{" "}
+              触发异常，需要结合监控证据完成影响确认和根因分析。
+            </p>
+            <div className="incident-facts">
+              <span>
+                <b>当前状态</b>
+                {selectedIncident.status}
+              </span>
+              <span>
+                <b>建议动作</b>先分析证据，再决定是否执行 Runbook
+              </span>
+            </div>
+            <div className="incident-detail-actions">
+              <button
+                className="secondary"
+                onClick={() => setMessage("已领取事件，状态进入处理中")}
+              >
+                领取事件
+              </button>
+              <button className="primary" onClick={() => setPage("scenarios")}>
+                <Workflow size={15} />
+                启动作战室
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -1314,7 +1739,11 @@ function ChartView({ option }: { option?: EChartsOption }) {
     if (!ref.current || !option) return;
     let disposed = false;
     let chart:
-      | { resize: () => void; dispose: () => void; setOption: (next: EChartsOption) => void }
+      | {
+          resize: () => void;
+          dispose: () => void;
+          setOption: (next: EChartsOption) => void;
+        }
       | undefined;
     const resize = () => chart?.resize();
     void import("./chart-runtime").then(({ createChart }) => {
@@ -1330,140 +1759,693 @@ function ChartView({ option }: { option?: EChartsOption }) {
   }, [option]);
   return <div className="echart" ref={ref} />;
 }
+type QueryModule = "datasources" | "chatbi" | "dashboard";
+
 function QueryV2({
-  catalog,
-  loadCatalog,
   initialQuestion = "",
 }: {
   catalog: Catalog | null;
   loadCatalog: (endpoint?: string) => Promise<void>;
   initialQuestion?: string;
 }) {
+  const [module, setModule] = useState<QueryModule>("chatbi");
+  const [datasources, setDatasources] = useState<DataSourceRecord[]>([]);
+  const [reports, setReports] = useState<DashboardReport[]>([]);
+  const [sourceId, setSourceId] = useState("");
   const [question, setQuestion] = useState(initialQuestion);
-  const [endpoint, setEndpoint] = useState("demo://tidb");
-  const [running, setRunning] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [running, setRunning] = useState(false);
+  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [sourceForm, setSourceForm] = useState({
+    name: "",
+    kind: "tidb" as "mysql" | "tidb",
+    host: "",
+    port: "4000",
+    database: "",
+    username: "root",
+    password: "",
+  });
+
+  const loadSources = async () => {
+    try {
+      const data = await api<DataSourceRecord[]>("/chatbi/datasources");
+      setDatasources(data);
+      setSourceId((current) =>
+        current && data.some((item) => item.id === current)
+          ? current
+          : data.find((item) => item.status === "ready")?.id ||
+            data[0]?.id ||
+            "",
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "数据源加载失败");
+    }
+  };
+  const loadReports = async () => {
+    try {
+      setReports(await api<DashboardReport[]>("/chatbi/reports"));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "大屏加载失败");
+    }
+  };
+  useEffect(() => {
+    void loadSources();
+    void loadReports();
+  }, []);
   useEffect(() => {
     if (initialQuestion) setQuestion(initialQuestion);
   }, [initialQuestion]);
+
   const run = async () => {
-    if (!question.trim()) return;
+    if (!sourceId || !question.trim()) {
+      setError("请先选择可用数据源并输入问题");
+      return;
+    }
     setRunning(true);
     setError("");
+    setMessage("");
     try {
-      const data = await api<QueryResult>("/query/conversations", {
+      const data = await api<QueryResult>("/chatbi/query", {
         method: "POST",
-        body: JSON.stringify({
-          question,
-          source_type: "tidb",
-          mcp_endpoint: endpoint === "demo://tidb" ? undefined : endpoint,
-        }),
+        body: JSON.stringify({ datasource_id: sourceId, question }),
       });
       setResult(data);
+      setMessage("分析完成，可检查 SQL 和证据后加入大屏");
     } catch (e) {
       setError(e instanceof Error ? e.message : "分析失败");
     } finally {
       setRunning(false);
     }
   };
+  const addDatabase = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError("");
+    try {
+      const item = await api<DataSourceRecord>("/chatbi/datasources", {
+        method: "POST",
+        body: JSON.stringify({
+          ...sourceForm,
+          port: Number(sourceForm.port),
+          test_on_create: true,
+        }),
+      });
+      setDatasources((current) => [item, ...current]);
+      setSourceId(item.id);
+      setShowAdd(false);
+      setSourceForm({
+        name: "",
+        kind: "tidb",
+        host: "",
+        port: "4000",
+        database: "",
+        username: "root",
+        password: "",
+      });
+      setMessage(
+        item.status === "ready"
+          ? `已连接 ${item.name}`
+          : `已保存 ${item.name}，连接测试未通过`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "数据源添加失败");
+    }
+  };
+  const uploadCsv = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const body = new FormData();
+    body.append("file", file);
+    try {
+      const item = await api<DataSourceRecord>("/chatbi/datasources/upload", {
+        method: "POST",
+        headers: {},
+        body,
+      });
+      setDatasources((current) => [item, ...current]);
+      setSourceId(item.id);
+      setMessage(`已添加文件数据源 ${item.name}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "文件数据源添加失败");
+    }
+    event.target.value = "";
+  };
+  const testSource = async (id: string) => {
+    try {
+      const item = await api<DataSourceRecord>(
+        `/chatbi/datasources/${id}/test`,
+        { method: "POST" },
+      );
+      setDatasources((current) =>
+        current.map((source) => (source.id === id ? item : source)),
+      );
+      setMessage(
+        item.status === "ready"
+          ? "连接测试通过"
+          : item.last_error || "连接测试未通过",
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "连接测试失败");
+    }
+  };
+  const approve = async () => {
+    if (!result || !sourceId) return;
+    const title = result.chart?.title || result.question;
+    try {
+      await api<DashboardReport>("/chatbi/reports", {
+        method: "POST",
+        body: JSON.stringify({
+          operation_id: result.operation_id,
+          datasource_id: sourceId,
+          title,
+        }),
+      });
+      await loadReports();
+      setMessage("已加入大屏");
+      setModule("dashboard");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "加入大屏失败");
+    }
+  };
+  const deleteReport = async (id: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/chatbi/reports/${id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) throw new Error((await response.text()) || "移除失败");
+      setReports((current) => current.filter((report) => report.id !== id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "移除失败");
+    }
+  };
+  const modules: [
+    QueryModule,
+    string,
+    string,
+    React.ComponentType<{ size?: number }>,
+  ][] = [
+    ["datasources", "数据源", "接入 TiDB、MySQL 与文件", PlugZap],
+    ["chatbi", "ChatBI", "自然语言生成可视化", MessageSquare],
+    ["dashboard", "大屏展示", "复用已认可报表", MonitorUp],
+  ];
   return (
-    <section className="content query-page">
-      <div className="query-intro">
-        <span className="eyebrow">自然语言查询 · Text2SQL · ECharts</span>
-        <h1>把问题交给数据</h1>
-        <p>
-          连接 TiDB MCP 后，系统会读取 Schema、表结构和字段 comment，再生成只读
-          SQL。
-        </p>
-      </div>
-      <div className="connector-strip">
+    <section className="content query-page chatbi-page">
+      <div className="section-head">
         <div>
-          <b>
-            <Link2 size={15} /> TiDB MCP 数据源
-          </b>
-          <span>
-            {catalog
-              ? catalog.database + " · " + catalog.schemas.length + " 个 Schema"
-              : "尚未采集结构"}
-          </span>
+          <span className="eyebrow">智能问数 · 数据源 · ChatBI · 大屏</span>
+          <h1>从问题到可复用报表</h1>
+          <p className="section-subtitle">
+            先选择数据源，再提问和核验，认可的结果一键沉淀到大屏。
+          </p>
         </div>
-        <input
-          value={endpoint}
-          onChange={(e) => setEndpoint(e.target.value)}
-          placeholder="MCP Streamable HTTP 地址，或 demo://tidb"
-        />
-        <button
-          className="secondary"
-          onClick={() => void loadCatalog(endpoint)}
-          disabled={running}
-        >
-          <Network size={15} />
-          采集结构
-        </button>
-      </div>
-      <div className="query-box">
-        <textarea
-          autoFocus
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={(event) => {
-            if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-              event.preventDefault();
-              void run();
-            }
-          }}
-          placeholder="例如：近 30 天各区域 GMV 趋势如何？"
-        />
-        <div className="query-actions">
-          <span>只读 SQL · 权限检查 · 结果可追溯</span>
-          <button className="primary" onClick={run} disabled={running || !question.trim()}>
-            {running ? (
-              <>
-                <Clock3 size={16} />
-                分析中…
-              </>
-            ) : (
-              <>
-                <Play size={16} />
-                开始分析
-              </>
-            )}
+        {module === "datasources" && (
+          <button className="primary" onClick={() => setShowAdd(true)}>
+            <Plus size={16} />
+            添加数据源
           </button>
-        </div>
-      </div>
-      <div className="suggestions">
-        {["近 30 天 GMV 趋势", "订单金额按区域汇总", "客户数量按区域分布"].map(
-          (x) => (
-            <button onClick={() => setQuestion(x)} key={x}>
-              {x}
-            </button>
-          ),
         )}
       </div>
-      {error && <div className="error-banner">{error}</div>}
-      {result && (
-        <div className="result panel">
-          <div className="panel-head">
-            <h3>分析结果</h3>
-            <span className="chip success">
-              {result.status === "completed" ? "已验证" : result.status}
+      <div
+        className="query-module-tabs"
+        role="tablist"
+        aria-label="智能问数模块"
+      >
+        {modules.map(([id, label, description, Icon]) => (
+          <button
+            key={id}
+            className={module === id ? "active" : ""}
+            role="tab"
+            aria-selected={module === id}
+            onClick={() => {
+              setModule(id);
+              setError("");
+            }}
+          >
+            {<Icon size={18} />}
+            <span>
+              <b>{label}</b>
+              <small>{description}</small>
             </span>
-          </div>
-          <p className="answer">{result.answer}</p>
-          {result.chart?.option && <ChartView option={result.chart.option} />}
-          <div className="result-grid">
-            <div>
-              <b>只读 SQL</b>
-              <pre>{result.sql}</pre>
+            <ChevronRight size={16} />
+          </button>
+        ))}
+      </div>
+      {message && (
+        <div className="notice">
+          <CheckCircle2 size={15} />
+          {message}
+          <button onClick={() => setMessage("")} aria-label="关闭提示">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+      {error && <div className="error-banner">{error}</div>}
+      {module === "datasources" && (
+        <div className="chatbi-source-layout">
+          <div className="panel source-guide">
+            <div className="panel-head">
+              <div className="panel-title">
+                <Server size={18} />
+                <span>
+                  <h3>数据源接入</h3>
+                  <small>凭证仅保存在后端进程内存，不会回显</small>
+                </span>
+              </div>
             </div>
-            <div className="evidence">
-              <b>证据来源</b>
-              {result.evidence.map((item) => (
-                <span key={item.type + "-" + item.ref}>{item.label}</span>
+            <p>
+              数据库连接会读取 Schema、表结构和字段 Comment。CSV/Parquet 使用
+              DuckDB 隔离分析。
+            </p>
+            <div className="source-type-hints">
+              <span>
+                <Link2 size={15} />
+                TiDB / MySQL
+              </span>
+              <span>
+                <FileSpreadsheet size={15} />
+                CSV / Parquet
+              </span>
+            </div>
+            <label className="secondary file-button source-upload">
+              <UploadCloud size={16} />
+              上传 CSV/Parquet
+              <input type="file" accept=".csv,.parquet" onChange={uploadCsv} />
+            </label>
+          </div>
+          <div className="source-list panel">
+            <div className="panel-head">
+              <h3>已添加数据源</h3>
+              <span className="chip">{datasources.length} 个</span>
+            </div>
+            {datasources.map((item) => (
+              <div className="source-row" key={item.id}>
+                <div className={`source-icon ${item.kind}`}>
+                  <>
+                    {item.kind === "csv" ? (
+                      <FileSpreadsheet size={17} />
+                    ) : (
+                      <Database size={17} />
+                    )}
+                  </>
+                </div>
+                <div className="row-main">
+                  <b>{item.name}</b>
+                  <span>
+                    {item.kind.toUpperCase()} ·{" "}
+                    {item.database || item.dataset_id || "文件数据"}
+                    {item.host ? ` · ${item.host}:${item.port}` : ""}
+                  </span>
+                  {item.last_error && (
+                    <small className="source-error">{item.last_error}</small>
+                  )}
+                </div>
+                <span
+                  className={`chip ${item.status === "ready" ? "success" : item.status === "error" ? "danger" : ""}`}
+                >
+                  {item.status === "ready"
+                    ? "可用"
+                    : item.status === "error"
+                      ? "连接失败"
+                      : "待测试"}
+                </span>
+                {item.kind !== "csv" && item.host && (
+                  <button
+                    className="icon-button"
+                    title="测试连接"
+                    aria-label={`测试 ${item.name}`}
+                    onClick={() => void testSource(item.id)}
+                  >
+                    <RefreshCw size={15} />
+                  </button>
+                )}
+                <button
+                  className="text-btn"
+                  onClick={() => {
+                    setSourceId(item.id);
+                    setModule("chatbi");
+                  }}
+                >
+                  去提问 <ChevronRight size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {module === "chatbi" && (
+        <div className="chatbi-workspace">
+          <div className="chatbi-conversation panel">
+            <div className="chatbi-toolbar">
+              <div>
+                <span className="eyebrow">对话分析</span>
+                <h3>问数据</h3>
+              </div>
+              <label>
+                数据源
+                <select
+                  value={sourceId}
+                  onChange={(event) => setSourceId(event.target.value)}
+                >
+                  {datasources.length === 0 && (
+                    <option value="">暂无可用数据源</option>
+                  )}
+                  {datasources.map((item) => (
+                    <option
+                      key={item.id}
+                      value={item.id}
+                      disabled={item.status !== "ready"}
+                    >
+                      {item.name} · {item.kind.toUpperCase()}{" "}
+                      {item.status !== "ready" ? "（不可用）" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="chat-empty">
+              <div className="chat-avatar">
+                <MessageSquare size={20} />
+              </div>
+              <div>
+                <b>今天想了解什么？</b>
+                <p>
+                  我会根据所选数据源生成只读 SQL，执行后自动选择最合适的 BI
+                  展示。
+                </p>
+              </div>
+            </div>
+            <div className="chat-suggestions">
+              {[
+                "近 30 天 GMV 趋势",
+                "订单金额按区域汇总",
+                "不同品类的销售额占比",
+              ].map((item) => (
+                <button key={item} onClick={() => setQuestion(item)}>
+                  {item}
+                </button>
               ))}
             </div>
+            <textarea
+              className="chat-input"
+              value={question}
+              autoFocus
+              onChange={(event) => setQuestion(event.target.value)}
+              onKeyDown={(event) => {
+                if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                  event.preventDefault();
+                  void run();
+                }
+              }}
+              placeholder="输入你的业务问题，例如：本月各区域 GMV 占比"
+            />
+            <div className="chat-actions">
+              <span>
+                <ShieldCheck size={14} />
+                只读执行 · 可追溯
+              </span>
+              <button
+                className="primary"
+                onClick={() => void run()}
+                disabled={running || !sourceId || !question.trim()}
+              >
+                {running ? (
+                  <>
+                    <Clock3 size={16} />
+                    分析中…
+                  </>
+                ) : (
+                  <>
+                    <Send size={16} />
+                    发送问题
+                  </>
+                )}
+              </button>
+            </div>
+            {result && (
+              <div className="chat-last-message">
+                <div className="chat-avatar user-avatar">林</div>
+                <div>
+                  <b>{result.question}</b>
+                  <span>已生成 SQL 和结果</span>
+                </div>
+              </div>
+            )}
           </div>
+          <div className="chatbi-report panel">
+            <div className="panel-head">
+              <div>
+                <span className="eyebrow">BI 结果</span>
+                <h3>{result?.chart?.title || "等待一次提问"}</h3>
+              </div>
+              {result && <span className="chip success">已完成</span>}
+            </div>
+            {result ? (
+              <>
+                <p className="answer">{result.answer}</p>
+                {result.chart?.option && (
+                  <ChartView option={result.chart.option} />
+                )}
+                <div className="report-table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        {result.columns.map((column) => (
+                          <th key={column}>{column}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.rows.slice(0, 20).map((row, rowIndex) => (
+                        <tr key={rowIndex}>
+                          {row.map((cell, cellIndex) => (
+                            <td key={cellIndex}>{String(cell ?? "-")}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <details className="sql-details">
+                  <summary>
+                    <FileCode2 size={15} />
+                    查看只读 SQL 与证据
+                  </summary>
+                  <pre>{result.sql}</pre>
+                  <div className="evidence">
+                    {result.evidence.map((item) => (
+                      <span key={item.type + item.ref}>{item.label}</span>
+                    ))}
+                  </div>
+                </details>
+                <button className="primary wide" onClick={() => void approve()}>
+                  <MonitorUp size={16} />
+                  认可并加入大屏
+                </button>
+              </>
+            ) : (
+              <div className="report-empty">
+                <PanelsTopLeft size={32} />
+                <b>报表会显示在这里</b>
+                <span>选择数据源并发送一个问题</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {module === "dashboard" && (
+        <div className="dashboard-panel">
+          <div className="dashboard-toolbar">
+            <div>
+              <span className="eyebrow">已认可 · 可复用</span>
+              <h3>经营分析大屏</h3>
+            </div>
+            <span className="chip success">{reports.length} 张报表</span>
+          </div>
+          {reports.length === 0 ? (
+            <div className="dashboard-empty">
+              <MonitorUp size={34} />
+              <b>还没有已认可报表</b>
+              <span>在 ChatBI 中核验结果后，点击“认可并加入大屏”。</span>
+              <button className="secondary" onClick={() => setModule("chatbi")}>
+                <MessageSquare size={15} />
+                去生成第一张
+              </button>
+            </div>
+          ) : (
+            <div className="dashboard-grid">
+              {reports.map((report) => (
+                <article className="dashboard-card panel" key={report.id}>
+                  <div className="panel-head">
+                    <div>
+                      <span className="eyebrow">{report.datasource_name}</span>
+                      <h3>{report.title}</h3>
+                    </div>
+                    <button
+                      className="icon-button"
+                      title="移除报表"
+                      aria-label={`移除 ${report.title}`}
+                      onClick={() => void deleteReport(report.id)}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                  <p className="dashboard-question">{report.question}</p>
+                  {report.chart.option && (
+                    <ChartView option={report.chart.option} />
+                  )}
+                  <div className="dashboard-card-foot">
+                    <span>认可人 {report.accepted_by}</span>
+                    <button
+                      className="text-btn"
+                      onClick={() => {
+                        setSourceId(report.datasource_id);
+                        setQuestion(report.question);
+                        setModule("chatbi");
+                      }}
+                    >
+                      再次分析 <ArrowRight size={14} />
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {showAdd && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowAdd(false);
+          }}
+        >
+          <form className="modal-card source-modal" onSubmit={addDatabase}>
+            <div className="panel-head">
+              <div>
+                <span className="eyebrow">新建连接</span>
+                <h3>添加数据库数据源</h3>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setShowAdd(false)}
+                aria-label="关闭"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <label>
+              连接类型
+              <select
+                value={sourceForm.kind}
+                onChange={(event) =>
+                  setSourceForm({
+                    ...sourceForm,
+                    kind: event.target.value as "mysql" | "tidb",
+                    port: event.target.value === "tidb" ? "4000" : "3306",
+                  })
+                }
+              >
+                <option value="tidb">TiDB</option>
+                <option value="mysql">MySQL</option>
+              </select>
+            </label>
+            <label>
+              名称
+              <input
+                required
+                value={sourceForm.name}
+                onChange={(event) =>
+                  setSourceForm({ ...sourceForm, name: event.target.value })
+                }
+                placeholder="例如：生产 TiDB 分析库"
+              />
+            </label>
+            <div className="form-row">
+              <label>
+                主机
+                <input
+                  required
+                  value={sourceForm.host}
+                  onChange={(event) =>
+                    setSourceForm({ ...sourceForm, host: event.target.value })
+                  }
+                  placeholder="db.example.internal"
+                />
+              </label>
+              <label>
+                端口
+                <input
+                  required
+                  type="number"
+                  value={sourceForm.port}
+                  onChange={(event) =>
+                    setSourceForm({ ...sourceForm, port: event.target.value })
+                  }
+                />
+              </label>
+            </div>
+            <div className="form-row">
+              <label>
+                数据库
+                <input
+                  required
+                  value={sourceForm.database}
+                  onChange={(event) =>
+                    setSourceForm({
+                      ...sourceForm,
+                      database: event.target.value,
+                    })
+                  }
+                  placeholder="analytics"
+                />
+              </label>
+              <label>
+                用户名
+                <input
+                  required
+                  value={sourceForm.username}
+                  onChange={(event) =>
+                    setSourceForm({
+                      ...sourceForm,
+                      username: event.target.value,
+                    })
+                  }
+                />
+              </label>
+            </div>
+            <label>
+              密码
+              <input
+                type="password"
+                value={sourceForm.password}
+                onChange={(event) =>
+                  setSourceForm({ ...sourceForm, password: event.target.value })
+                }
+                placeholder="留空表示无密码"
+                autoComplete="new-password"
+              />
+            </label>
+            <div className="modal-note">
+              <ShieldCheck size={15} />
+              密码仅用于本次连接测试和后端进程内存中的连接，不会在列表回显。
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setShowAdd(false)}
+              >
+                取消
+              </button>
+              <button className="primary" type="submit">
+                <PlugZap size={15} />
+                保存并测试连接
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </section>
@@ -1478,7 +2460,9 @@ function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
   const [datasetQuestion, setDatasetQuestion] = useState("");
   const [datasetResult, setDatasetResult] = useState<QueryResult | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
-  const [selectedAsset, setSelectedAsset] = useState<(typeof assets)[number] | null>(null);
+  const [selectedAsset, setSelectedAsset] = useState<
+    (typeof assets)[number] | null
+  >(null);
   const [assetMessage, setAssetMessage] = useState("");
   const filtered = assets.filter((item) =>
     (item.name + " " + item.desc).toLowerCase().includes(search.toLowerCase()),
@@ -1585,7 +2569,13 @@ function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
             <p>{a.desc}</p>
             <div className="asset-foot">
               <span>{a.rows} 行</span>
-              <button className="text-btn" onClick={() => { setSelectedAsset(a); setAssetMessage(""); }}>
+              <button
+                className="text-btn"
+                onClick={() => {
+                  setSelectedAsset(a);
+                  setAssetMessage("");
+                }}
+              >
                 查看详情 <ChevronRight size={14} />
               </button>
             </div>
@@ -1595,13 +2585,57 @@ function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
       {selectedAsset && (
         <div className="panel asset-detail-panel">
           <div className="panel-head">
-            <div className="panel-title"><Database size={18} /><span><h3>{selectedAsset.name}</h3><small>{selectedAsset.type} · {selectedAsset.owner}</small></span></div>
-            <button className="icon-button" onClick={() => setSelectedAsset(null)} aria-label="关闭资产详情"><X size={16} /></button>
+            <div className="panel-title">
+              <Database size={18} />
+              <span>
+                <h3>{selectedAsset.name}</h3>
+                <small>
+                  {selectedAsset.type} · {selectedAsset.owner}
+                </small>
+              </span>
+            </div>
+            <button
+              className="icon-button"
+              onClick={() => setSelectedAsset(null)}
+              aria-label="关闭资产详情"
+            >
+              <X size={16} />
+            </button>
           </div>
           <p>{selectedAsset.desc}</p>
-          {assetMessage && <div className="inline-success"><CheckCircle2 size={14} />{assetMessage}</div>}
-          <div className="asset-detail-facts"><span><b>数据规模</b>{selectedAsset.rows} 行</span><span><b>质量评分</b>{selectedAsset.quality}</span><span><b>责任团队</b>{selectedAsset.owner}</span></div>
-          <div className="asset-detail-actions"><button className="secondary" onClick={() => setPage("catalog")}><Network size={15} />查看结构与关系</button><button className="primary" onClick={() => setAssetMessage("已创建该资产的治理任务草稿")}><ListChecks size={15} />创建治理任务</button></div>
+          {assetMessage && (
+            <div className="inline-success">
+              <CheckCircle2 size={14} />
+              {assetMessage}
+            </div>
+          )}
+          <div className="asset-detail-facts">
+            <span>
+              <b>数据规模</b>
+              {selectedAsset.rows} 行
+            </span>
+            <span>
+              <b>质量评分</b>
+              {selectedAsset.quality}
+            </span>
+            <span>
+              <b>责任团队</b>
+              {selectedAsset.owner}
+            </span>
+          </div>
+          <div className="asset-detail-actions">
+            <button className="secondary" onClick={() => setPage("catalog")}>
+              <Network size={15} />
+              查看结构与关系
+            </button>
+            <button
+              className="primary"
+              onClick={() => setAssetMessage("已创建该资产的治理任务草稿")}
+            >
+              <ListChecks size={15} />
+              创建治理任务
+            </button>
+          </div>
         </div>
       )}
       {datasets.length > 0 && (

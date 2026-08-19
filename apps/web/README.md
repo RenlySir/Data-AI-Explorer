@@ -8,4 +8,4 @@ npm install
 npm run dev
 ```
 
-Open the URL printed by Vite (usually `http://localhost:5173`). This is a self-contained frontend demo with simulated query streaming and local UI state; no backend is required.
+Open the URL printed by Vite (usually `http://localhost:5173`). The UI uses `VITE_API_BASE_URL`; it defaults to `http://localhost:18082/api/v1` for the repository's local backend workflow. Set `VITE_API_BASE_URL=http://localhost:8080/api/v1` when using the default Compose port.

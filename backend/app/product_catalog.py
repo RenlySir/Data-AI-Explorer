@@ -84,6 +84,9 @@ PRODUCT_MODULES = [
         summary="从数据结构理解、自然语言问题到安全 SQL、复核结果和 BI 报表的完整分析链路。",
         owner_role="数据产品负责人",
         features=[
+            feature("query-datasources", "数据源管理", "统一添加和测试 TiDB、MySQL、CSV 与 Parquet 数据源。", ["数据分析师", "数据工程师", "DBA"], "available", "query", "添加数据源", ["连接参数或文件", "只读凭证"], ["可用数据源", "结构与行数摘要"], ["凭证不回显", "私网或白名单主机", "连接默认只读"], ["smart-query-team"], ["GET/POST /api/v1/chatbi/datasources"]),
+            feature("query-chatbi", "ChatBI 对话分析", "选择数据源后将自然语言转换为 SQL，执行并自动选择 BI 图表。", ["业务用户", "数据分析师"], "available", "query", "开始 ChatBI", ["数据源", "自然语言问题"], ["只读 SQL", "查询结果", "ECharts 图表"], ["SQL 只读拦截", "限制返回行数", "保留执行证据"], ["smart-query-team"], ["POST /api/v1/chatbi/query"]),
+            feature("query-dashboard", "认可报表大屏", "将用户核验认可的 ChatBI 结果沉淀为可复用经营大屏。", ["业务用户", "管理者"], "available", "query", "查看大屏", ["已完成分析", "认可动作"], ["大屏报表", "来源与认可人"], ["仅认可结果可加入", "保留原问题和数据源", "支持移除"], ["smart-query-team"], ["GET/POST /api/v1/chatbi/reports"]),
             feature("query-tidb-mcp", "TiDB MCP 元数据连接", "采集 Schema、表、字段、Comment 与关系。", ["数据工程师", "DBA"], "demo", "catalog", "采集结构", ["MCP Endpoint", "只读凭证引用"], ["元数据目录", "关系边"], READ_ONLY, ["smart-query-team"], ["POST /api/v1/tidb/mcp/introspect"]),
             feature("query-semantic", "指标与语义匹配", "把业务术语映射到指标口径、维度和可用资产。", ["业务用户", "数据分析师"], "demo", "query", "开始问数", ["自然语言问题", "工作区"], ["指标口径", "候选数据资产"], ["应用数据权限", "歧义时要求澄清"], ["smart-query-team"]),
             feature("query-text2sql", "自然语言转 SQL", "生成受语义模型约束的 TiDB 只读 SQL。", ["业务用户", "数据分析师"], "available", "query", "生成并执行", ["问题", "Schema", "指标口径"], ["只读 SQL", "查询参数"], ["AST 拦截写操作", "限制扫描量与超时", "参数化执行"], ["smart-query-team"], ["POST /api/v1/query/conversations"]),
