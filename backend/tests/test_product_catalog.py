@@ -77,6 +77,10 @@ class ProductCatalogApiTest(unittest.TestCase):
         self.assertEqual(datasource.status_code, 200)
         self.assertEqual(datasource.json()["delivery_state"], "available")
         self.assertEqual(datasource.json()["target_page"], "datasources")
+        lineage = self.client.get("/api/v1/product/features/governance-lineage")
+        self.assertEqual(lineage.status_code, 200)
+        self.assertEqual(lineage.json()["delivery_state"], "available")
+        self.assertEqual(lineage.json()["target_page"], "catalog")
         self.assertEqual(self.client.get("/api/v1/product/features/not-found").status_code, 404)
         self.assertEqual(self.client.get("/api/v1/product/modules?state=unknown").status_code, 422)
 

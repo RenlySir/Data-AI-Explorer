@@ -52,6 +52,17 @@ The active connection is used by Text2SQL and chart selection before environment
 
 Direct database hosts must match `CHATBI_ALLOWED_DB_HOSTS`, or resolve only to private/loopback addresses when `CHATBI_ALLOW_PRIVATE_HOSTS=true`. Production deployments should set the private-host fallback to `false`, configure exact hosts, store credentials in a secret manager, and replace the in-memory records with persistent encrypted storage.
 
+## Data Relationship APIs
+
+- `POST /api/v1/data-relationships/{datasource_id}/collect`: collect all accessible business schemas, tables, column types/comments and foreign keys from a registered TiDB/MySQL source.
+- `GET /api/v1/data-relationships/{datasource_id}`: return graph nodes, table/field edges, provenance, confidence and SQL observations.
+- `POST /api/v1/data-relationships/{datasource_id}/sql-observations`: parse a submitted SELECT/WITH statement with SQLGlot and learn table/field JOIN relationships without executing it.
+- `POST /api/v1/data-relationships/{datasource_id}/collect-sql`: pull TiDB `STATEMENTS_SUMMARY_HISTORY`, redact literals, deduplicate by digest and increment relationship observation counts.
+- `GET /api/v1/data-relationships/{datasource_id}/sql-collector`: read the server-side collector switch, interval, latest collection time and latest error.
+- `PUT /api/v1/data-relationships/{datasource_id}/sql-collector`: start or stop the in-process collector. It keeps running after the browser page closes while the API process remains alive.
+
+The local MVP stores graph snapshots, collector configuration and checkpoints in process memory. Production must use PostgreSQL and a singleton scheduled Connector Worker, isolate data by tenant/workspace, and grant the collector account read-only metadata plus the minimum TiDB statement-summary privilege.
+
 ## TiDB SQL Optimizer APIs
 
 - `GET /api/v1/aiops/sql-optimizer/versions`: list the version profiles for TiDB 7.5 and 8.0-8.5, including source tag, commit and relevant optimizer capabilities.

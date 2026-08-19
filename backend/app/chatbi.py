@@ -168,20 +168,77 @@ def inspect_database(item: DataSourceRecord) -> tuple[list[dict[str, Any]], int]
             version = cursor.fetchone()["version"]
             cursor.execute(
                 """
-                SELECT t.TABLE_NAME, t.TABLE_COMMENT, c.COLUMN_NAME, c.COLUMN_TYPE,
+                SELECT t.TABLE_SCHEMA, t.TABLE_NAME, t.TABLE_COMMENT,
+                       c.COLUMN_NAME, c.COLUMN_TYPE,
                        c.COLUMN_COMMENT, c.IS_NULLABLE
                 FROM information_schema.TABLES t
                 JOIN information_schema.COLUMNS c
                   ON c.TABLE_SCHEMA=t.TABLE_SCHEMA AND c.TABLE_NAME=t.TABLE_NAME
-                WHERE t.TABLE_SCHEMA=%s
-                ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION
-                """,
-                (item.database,),
+                WHERE t.TABLE_TYPE='BASE TABLE'
+                  AND t.TABLE_SCHEMA NOT IN
+                      ('INFORMATION_SCHEMA', 'PERFORMANCE_SCHEMA', 'METRICS_SCHEMA',
+                       'mysql', 'sys')
+                ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME, c.ORDINAL_POSITION
+                """
             )
             rows = list(cursor.fetchall())
     finally:
         connection.close()
-    return rows, len({row["TABLE_NAME"] for row in rows}) if rows else 0
+    return rows, len({(row["TABLE_SCHEMA"], row["TABLE_NAME"]) for row in rows}) if rows else 0
+
+
+def inspect_database_relationships(item: DataSourceRecord) -> list[dict[str, str]]:
+    connection = connect_database(item)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME,
+                       REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME,
+                       REFERENCED_COLUMN_NAME
+                FROM information_schema.KEY_COLUMN_USAGE
+                WHERE REFERENCED_TABLE_NAME IS NOT NULL
+                  AND TABLE_SCHEMA NOT IN
+                      ('INFORMATION_SCHEMA', 'PERFORMANCE_SCHEMA', 'METRICS_SCHEMA',
+                       'mysql', 'sys')
+                ORDER BY TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME
+                """
+            )
+            rows = list(cursor.fetchall())
+    finally:
+        connection.close()
+    return [
+        {
+            "from": f"{row['TABLE_SCHEMA']}.{row['TABLE_NAME']}.{row['COLUMN_NAME']}",
+            "to": (
+                f"{row['REFERENCED_TABLE_SCHEMA']}.{row['REFERENCED_TABLE_NAME']}."
+                f"{row['REFERENCED_COLUMN_NAME']}"
+            ),
+            "type": "foreign_key",
+        }
+        for row in rows
+    ]
+
+
+def collect_recent_sql(item: DataSourceRecord, limit: int = 200) -> list[dict[str, Any]]:
+    connection = connect_database(item)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT DIGEST, DIGEST_TEXT, SUM(EXEC_COUNT) AS EXEC_COUNT,
+                       MIN(FIRST_SEEN) AS FIRST_SEEN, MAX(LAST_SEEN) AS LAST_SEEN
+                FROM information_schema.STATEMENTS_SUMMARY_HISTORY
+                WHERE STMT_TYPE='Select' AND DIGEST_TEXT IS NOT NULL
+                GROUP BY DIGEST, DIGEST_TEXT
+                ORDER BY LAST_SEEN DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            return list(cursor.fetchall())
+    finally:
+        connection.close()
 
 
 def test_database_source(item: DataSourceRecord) -> DataSourceRecord:

@@ -21,7 +21,7 @@
 | 演示闭环 | 页面、状态和确定性结果可操作，真实企业 Adapter 尚未接入 | 明确显示演示边界，不伪造生产执行 |
 | 待生产接入 | 已完成产品和架构契约，缺少持久化、权限或外部系统 | 功能中心禁用操作按钮，显示生产依赖 |
 
-当前目录：8 个模块，63 项功能；可使用 21 项、演示闭环 32 项、待生产接入 10 项。运行时契约位于 `backend/app/product_catalog.py`，页面统计直接由该接口计算，避免文档、页面和代码各自维护数字。
+当前目录：8 个模块，63 项功能；可使用 22 项、演示闭环 31 项、待生产接入 10 项。运行时契约位于 `backend/app/product_catalog.py`，页面统计直接由该接口计算，避免文档、页面和代码各自维护数字。
 
 ## 2. 用户入口与信息架构
 
@@ -47,7 +47,7 @@
 | query-datasources | 数据源管理 | TiDB/MySQL 连接参数或 CSV/Parquet | 可选数据源、连接状态、结构摘要 | 可使用 | 智能问数/添加数据源 |
 | query-chatbi | ChatBI 对话分析 | 数据源、自然语言问题 | 只读 SQL、查询结果、AI 选择的 ECharts | 可使用 | 智能问数/发送问题 |
 | query-dashboard | 认可报表大屏 | 已完成分析、用户认可 | 大屏卡片、来源、认可人 | 可使用 | 智能问数/认可并加入大屏 |
-| query-tidb-mcp | TiDB MCP 元数据连接 | MCP Endpoint、只读凭证引用 | Schema、表、字段 Comment、关系 | 演示闭环 | TiDB 结构/采集结构 |
+| query-tidb-mcp | TiDB MCP 元数据连接 | MCP Endpoint、只读凭证引用 | Schema、表、字段 Comment、关系 | 演示闭环 | 数据关系/采集元数据 |
 | query-semantic | 指标与语义匹配 | 自然语言问题、工作区 | 指标口径、候选资产、澄清项 | 演示闭环 | 智能问数 |
 | query-text2sql | 自然语言转 SQL | 问题、Schema、口径 | TiDB 只读 SQL、参数 | 可使用 | 智能问数/生成并执行 |
 | query-validation | 结果复核与证据 | SQL 结果、指标规则 | 数量级复核、SQL/资产证据 | 演示闭环 | 问数结果 |
@@ -84,14 +84,14 @@
 | ID | 具体功能 | 主要输入 | 主要产出 | 状态 | 操作入口 |
 |---|---|---|---|---|---|
 | governance-catalog | 数据资产目录 | 搜索、标签、负责人 | 资产、质量、负责人 | 可使用 | 数据资产 |
-| governance-schema | Schema 与字段 Comment | 数据源、Schema | 表结构、字段说明 | 可使用 | TiDB 结构 |
-| governance-lineage | 表/字段关系与血缘 | 资产、方向、深度 | 上下游关系图 | 演示闭环 | TiDB 结构 |
+| governance-schema | Schema 与字段 Comment | TiDB/MySQL 数据源 | 全量业务 Schema、表结构、字段说明 | 可使用 | 数据关系/元数据目录 |
+| governance-lineage | 表/字段关系与血缘 | 数据源、外键、关联查询 SQL | 表级/字段级网络、来源、次数、置信度 | 可使用 | 数据关系/关系网络图 |
 | governance-impact | 变更影响分析 | 变更对象、类型 | 影响清单、责任人、风险 | 演示闭环 | 场景中心 |
 | governance-sql-assets | SQL 资产梳理 | SQL 日志、来源任务 | SQL 资产、相似组、风险 | 待生产接入 | SQL 优化 |
 | governance-quality | 数据质量规则 | 资产、规则、阈值 | 规则结果、异常任务 | 演示闭环 | 场景中心 |
 | governance-stewardship | 标签、口径与责任人 | 资产、术语、负责人 | 治理属性、版本记录 | 待生产接入 | 功能中心 |
 
-关系来源优先级：SQL/ETL 解析 → OpenLineage → 调度依赖 → 人工确认。每条关系保留来源、采集时间、可信度和生效版本。大型血缘图按方向、深度和类型渐进加载。
+当前闭环：选择数据源 → 采集全部可访问业务 Schema/表/字段 Comment/外键 → 生成表级网络 → 下钻字段级网络 → 手工提交 SQL 或启动服务端持续采集 TiDB 语句摘要 → AST 解析 JOIN → 合并关系次数与置信度。采集 SQL 只解析不执行，非 SELECT 拒绝；同一摘要重复拉取不重复累计。PoC 服务端任务在页面关闭后继续运行；生产版将当前内存快照和任务状态迁移到 PostgreSQL，并改由持久化 Worker 调度。
 
 ## 6. 模块四：AIOps 事件与巡检
 

@@ -139,6 +139,10 @@ OpenSearch 保存资产搜索文档；PostgreSQL 保存权威元数据；MVP 血
 
 SQL 资产流程：采集 → 指纹归一化 → 聚类去重 → 解析引用 → 风险评分 → 绑定负责人/指标 → 归档。严禁存储未脱敏的 SQL Literal 和用户隐私参数。
 
+当前数据关系切片以 `/api/v1/data-relationships/{datasource_id}` 为聚合边界。元数据采集读取全部授权业务 Schema 的 `TABLES/COLUMNS/KEY_COLUMN_USAGE`；SQL 采集读取 TiDB `STATEMENTS_SUMMARY_HISTORY`，按 Digest 和累计执行次数做幂等增量，再以 sqlglot MySQL/TiDB 方言 AST 提取表、别名、JOIN 与字段等值条件。边同时生成 table/field 两个层级，并记录 `source_type/observation_count/confidence/first_seen_at/last_seen_at`。采集 SQL 绝不送入 Query Executor。
+
+PoC 暂存进程内关系快照，并由 FastAPI 进程内常驻任务每 30 秒增量采集；页面关闭后任务仍运行，但服务重启会丢失开关和检查点。生产必须迁移到 PostgreSQL `lineage_edge/sql_observation/collector_checkpoint`，由租户隔离的 Connector Worker 按游标调度并持有任务租约，失败进入重试队列，前端只读服务端快照。读取语句摘要的账号只授予必要监控视图权限，不复用生产写账号。
+
 ### 5.5 AIOps Engine
 
 输入适配 Alertmanager Webhook、OpenTelemetry、Loki/OpenSearch、Kubernetes Event、Airflow/DolphinScheduler。统一事件模型后写 Kafka `observability.raw.v1`。

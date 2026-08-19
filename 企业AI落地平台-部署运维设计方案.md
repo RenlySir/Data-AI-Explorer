@@ -136,6 +136,8 @@ P0：控制面不可用、数据泄露、Executor 未授权执行；立即电话
 
 复盘问数正确率、SQL 拦截、RCA 采纳率、Runbook 成功/回滚、模型成本与延迟；清理过期 Query Result；检查未发布指标、失败血缘和长期运行任务；抽查审计完整性。
 
+数据关系采集 Worker 使用独立只读数据库账号：允许读取业务 `INFORMATION_SCHEMA.TABLES/COLUMNS/KEY_COLUMN_USAGE`，TiDB SQL 关系采集再按版本授予 `STATEMENTS_SUMMARY_HISTORY` 所需的最小监控权限。禁止授予 DDL/DML 权限。PoC 使用 API 进程内常驻任务，页面关闭后仍运行，但服务重启会丢失调度状态；生产由持有任务租约的调度器按 `collector_checkpoint` 执行，建议默认 5 分钟，失败指数退避，按 Digest 幂等。SQL Literal 入库前脱敏，观察记录设置租户级保留期。
+
 ### 9.3 月度维护
 
 执行漏洞扫描、依赖更新评估、权限回收、备份恢复抽测、容量预测、模型离线评测和 Runbook 过期复审。高风险动作和模型路由变更必须走变更单。

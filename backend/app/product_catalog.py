@@ -123,7 +123,7 @@ PRODUCT_MODULES = [
         features=[
             feature("governance-catalog", "数据资产目录", "按名称、标签、负责人和业务域检索数据资产。", ["业务用户", "数据工程师", "DBA"], "available", "assets", "浏览资产", ["搜索条件"], ["资产列表", "质量与负责人"], READ_ONLY, api_refs=["GET /api/v1/assets"]),
             feature("governance-schema", "Schema 与字段 Comment", "查看 TiDB Schema、表、字段类型和业务注释。", ["数据工程师", "DBA"], "available", "catalog", "查看结构", ["数据源", "Schema"], ["表结构", "字段 Comment"], READ_ONLY, ["data-quality"]),
-            feature("governance-lineage", "表/字段关系与血缘", "展示上下游关系、来源、更新时间和可信度。", ["数据工程师", "DBA"], "demo", "catalog", "查看关系", ["资产", "方向与深度"], ["关系图", "上游/下游"], ["大图按深度加载", "标记推断关系"], ["data-quality"]),
+            feature("governance-lineage", "表/字段关系与血缘", "选择数据源采集全量 Schema、字段 Comment 与外键，并从关联 SQL 持续推断关系。", ["数据工程师", "DBA"], "available", "catalog", "查看关系", ["TiDB/MySQL 数据源", "关联查询 SQL"], ["表级/字段级网络图", "来源、次数与置信度"], ["采集账号只读", "仅解析不执行 SQL", "标记推断关系"], ["data-quality"], ["POST /api/v1/data-relationships/{datasource_id}/collect", "POST /api/v1/data-relationships/{datasource_id}/collect-sql"]),
             feature("governance-impact", "变更影响分析", "在改表、改指标或数据异常前计算受影响任务和服务。", ["数据工程师", "发布经理"], "demo", "scenarios", "发起影响分析", ["变更对象", "变更类型"], ["影响清单", "责任人", "风险"], READ_ONLY, ["data-quality", "release-review"]),
             feature("governance-sql-assets", "SQL 资产梳理", "归档查询 SQL，识别重复、高风险和热点语句。", ["DBA", "数据工程师"], "planned", "sql-optimizer", "分析 SQL", ["SQL 日志", "来源任务"], ["SQL 资产", "相似组", "风险标签"], ["SQL 文本脱敏", "按租户隔离"]),
             feature("governance-quality", "数据质量规则", "维护空值、重复、范围、波动和一致性规则。", ["数据工程师", "数据 Steward"], "demo", "scenarios", "调查质量异常", ["资产", "规则与阈值"], ["规则结果", "异常任务"], ["规则版本化", "修复必须复验"], ["data-quality"]),

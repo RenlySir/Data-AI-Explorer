@@ -281,7 +281,7 @@ Playwright 最少覆盖：问题澄清、SQL 被拒绝、大结果导出、SSE �
 | 智能问数 | query-semantic、query-text2sql、query-bi | 生成并执行 |
 | 知识库 | knowledge-qa、knowledge-ingest、knowledge-retrieval | 检索并回答 |
 | 数据资产 | governance-catalog、query-file、query-directory | 浏览资产/上传分析 |
-| TiDB 结构 | query-tidb-mcp、governance-schema、governance-lineage | 采集结构 |
+| 数据关系 | query-tidb-mcp、governance-schema、governance-lineage | 采集元数据/采集关联 SQL |
 | AIOps 事件 | aiops-event-center、aiops-evidence、aiops-rca | 开始分析 |
 | SQL 优化 | sql-version-profile、sql-simulate、sql-advice | 开始优化 |
 | 场景中心 | 12 个 scenario-*、task-* | 启动/推进/审批 |
@@ -297,7 +297,7 @@ Playwright 最少覆盖：问题澄清、SQL 被拒绝、大结果导出、SSE �
 
 ## 25. 前端包体与图表按需加载
 
-智能问数支持折线、柱状、饼图和表格。前端仅在图表实际出现时动态加载 `echarts/core`，按需注册 `LineChart`、`BarChart`、`PieChart`、`GridComponent`、`LegendComponent`、`TooltipComponent` 和 `CanvasRenderer`，不把完整 ECharts 集合放入首屏包。新增图表类型必须同步注册对应 Chart/Component，并在构建门禁中检查首屏包体。
+智能问数支持折线、柱状、饼图和表格，数据关系使用力导向网络图。前端仅在图表实际出现时动态加载 `echarts/core`，按需注册 `LineChart`、`BarChart`、`PieChart`、`GraphChart`、`GridComponent`、`LegendComponent`、`TooltipComponent` 和 `CanvasRenderer`，不把完整 ECharts 集合放入首屏包。新增图表类型必须同步注册对应 Chart/Component，并在构建门禁中检查首屏包体。
 
 ## 24. ChatBI 三模块页面
 
@@ -315,7 +315,7 @@ ChatBI 使用左右双栏：左栏为数据源选择、建议问题、对话输�
 - 左侧导航分为总览、数据智能、运维协同，减少 9 个入口同级平铺带来的认知负担；窄屏只保留图标并通过 `title/aria-label` 解释。
 - 顶部栏统一展示当前导航分组、页面名称、全局功能搜索、环境状态、通知和当前身份；搜索入口进入功能中心。
 - 工作台先显示业务问候、系统状态与核心指标，再显示四个高频任务，最后呈现事件和问数历史，形成“判断状态 → 发起任务 → 继续工作”的阅读顺序。
-- 系统设置独立为基础设置、模型网关、数据连接、安全策略四个可操作视图，不再复用 TiDB 结构页面。
+- 系统设置独立为基础设置、模型网关、数据连接、安全策略四个可操作视图，不再复用数据关系页面。
 - 模型接入升级为独立一级页面；首次登录且工作空间无模型连接时先进入配置向导。页面按“公有/私有 → Provider → 参数 → 测试 → 默认模型”组织，设置页只保留跳转入口，不再维护一份重复表单。
 - 数据源管理升级为平台管理下独立一级页面；用户完成模型接入后，可按“添加 → 测试 → 进入问数”继续完成首个数据分析任务。
 
@@ -335,3 +335,9 @@ ChatBI 使用左右双栏：左栏为数据源选择、建议问题、对话输�
 8. 设置：先选择分类，再从上到下填写字段，主保存按钮置于表单末尾；测试连接和保存均返回明确结果。
 
 无结果、无权限、失败和规划功能不得留下“点击后无响应”的控件。关闭按钮位于详情右上角，次要操作在左、主操作在右；手机宽度下操作按钮纵向排列，主操作保持最后一个视觉位置。
+
+## 28. 数据关系页面
+
+页面先选择已登记的 TiDB/MySQL 数据源，再提供“采集关联 SQL”和唯一主操作“采集元数据”。摘要显示 Schema、表、非结构关系和 SQL Digest 数量。任务视图分为关系网络图、元数据目录、SQL 采集：网络图可切表级/字段级，边按元数据、SQL 推断、字段从属着色；右侧关系列表显示次数与置信度；元数据目录按 Schema 展开 Comment；SQL 页明确“仅解析、不执行”。“持续采集 SQL”只调用服务端启停 API，不在浏览器创建周期定时器；切换数据源时读取服务端状态并回显最近采集时间。
+
+关系网络复用按需加载的 ECharts `GraphChart`，开启 force、roam、draggable 和 adjacency emphasis。Tooltip 使用 richText，数据库 Comment 不注入 HTML。1120px 以下图和关系清单改为上下布局，620px 以下操作和 Tab 单列；390px 验收要求 Canvas 有实际尺寸、页面 `scrollWidth=390`、控制台无错误。

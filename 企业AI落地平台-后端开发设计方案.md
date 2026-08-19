@@ -182,6 +182,19 @@ Connector Worker 使用 Connector SPI：`testConnection`、`discoverSchemas`、`
 
 数据库 SQL 解析优先使用 SQLGlot/Apache Calcite；解析结果包含表级和字段级关系。OpenLineage 事件作为补充来源。边合并使用 `(tenant_id, source_urn, target_urn, edge_type)` 唯一键和可信度更新规则。
 
+当前 FastAPI 切片提供以下可开发契约：
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| POST | `/api/v1/data-relationships/{datasource_id}/collect` | 采集全部授权业务 Schema、表、字段 Comment 和外键，生成关系快照 |
+| GET | `/api/v1/data-relationships/{datasource_id}` | 读取当前节点、边和 SQL 观察记录 |
+| POST | `/api/v1/data-relationships/{datasource_id}/sql-observations` | 接收手工或 Connector 推送的 SELECT/WITH SQL，AST 解析关系 |
+| POST | `/api/v1/data-relationships/{datasource_id}/collect-sql` | 增量拉取 TiDB 语句摘要并按 Digest/执行次数去重 |
+| GET | `/api/v1/data-relationships/{datasource_id}/sql-collector` | 查询服务端持续采集开关、周期、最近成功时间和错误 |
+| PUT | `/api/v1/data-relationships/{datasource_id}/sql-collector` | 启停服务端进程内采集任务；页面关闭后仍运行 |
+
+`backend/app/data_relationships.py` 负责 SQLGlot 解析、别名解析、表/字段边生成、次数和置信度合并；`chatbi.py` 负责只读元数据、外键和 `STATEMENTS_SUMMARY_HISTORY` 采集。采集到的 SQL 不进入执行器，非 SELECT/WITH 返回 422。当前常驻线程、内存字典和进程生命周期绑定，仅用于单进程 PoC；生产表为 `lineage_node/lineage_edge/sql_observation/collector_checkpoint`，唯一键需包含 tenant、datasource、source、target、kind 和 level，并由独立 Worker 保证任务租约和多实例互斥。
+
 OpenSearch 索引按 `aegis-assets-v{n}`、`aegis-events-v{n}`；mapping 固定、禁止 dynamic mapping 扩散。重建索引采用新索引 + alias 原子切换。
 
 ## 8. AIOps 后端实现

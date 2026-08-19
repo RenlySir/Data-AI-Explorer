@@ -62,6 +62,7 @@ import "./polish.css";
 import "./chatbi.css";
 import "./models.css";
 import "./datasources.css";
+import "./relationships.css";
 
 type Page =
   | "workbench"
@@ -112,6 +113,56 @@ type Catalog = {
   }[];
   relationships: { from: string; to: string; type: string }[];
   collected_at: string;
+};
+type RelationshipNode = {
+  id: string;
+  label: string;
+  kind: "schema" | "table" | "column";
+  parent_id?: string;
+  schema_name?: string;
+  table_name?: string;
+  data_type?: string;
+  comment?: string;
+};
+type RelationshipEdge = {
+  id: string;
+  source: string;
+  target: string;
+  kind: string;
+  level: "structure" | "table" | "field";
+  source_type: "metadata" | "sql" | "structure";
+  observation_count: number;
+  confidence: number;
+  first_seen_at: string;
+  last_seen_at: string;
+};
+type SqlObservation = {
+  id: string;
+  digest: string;
+  sql_preview: string;
+  source: string;
+  execution_count: number;
+  relationship_ids: string[];
+  first_seen_at: string;
+  last_seen_at: string;
+};
+type RelationshipSnapshot = {
+  datasource_id: string;
+  datasource_name: string;
+  database: string;
+  source: string;
+  schemas: Catalog["schemas"];
+  nodes: RelationshipNode[];
+  edges: RelationshipEdge[];
+  sql_observations: SqlObservation[];
+  collected_at: string;
+};
+type SqlCollectorStatus = {
+  datasource_id: string;
+  enabled: boolean;
+  interval_seconds: number;
+  last_collected_at?: string;
+  last_error?: string;
 };
 type QueryResult = {
   operation_id: string;
@@ -553,7 +604,7 @@ function App() {
         ["query", "智能问数", MessageSquare],
         ["knowledge", "知识库", BookOpen],
         ["assets", "数据资产", Database],
-        ["catalog", "TiDB 结构", Network],
+        ["catalog", "数据关系", Network],
       ],
     ],
     [
@@ -776,13 +827,7 @@ function App() {
         )}{" "}
         {page === "sql-optimizer" && <SQLOptimizerPage />}{" "}
         {page === "assets" && <AssetsV2 setPage={navigatePage} />}{" "}
-        {page === "catalog" && (
-          <CatalogPage
-            catalog={catalog}
-            loading={catalogLoading}
-            loadCatalog={loadCatalog}
-          />
-        )}
+        {page === "catalog" && <CatalogPage setPage={navigatePage} />}
         {page === "settings" && <SettingsPage setPage={navigatePage} />}
       </main>
     </div>
@@ -3733,7 +3778,7 @@ function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
           <div className="asset-detail-actions">
             <button className="secondary" onClick={() => setPage("catalog")}>
               <Network size={15} />
-              查看结构与关系
+              查看数据关系
             </button>
             <button
               className="primary"
@@ -3832,118 +3877,602 @@ function AssetsV2({ setPage }: { setPage: (page: Page) => void }) {
     </section>
   );
 }
-function CatalogPage({
-  catalog,
-  loading,
-  loadCatalog,
+function RelationshipNetwork({
+  snapshot,
+  level,
 }: {
-  catalog: Catalog | null;
-  loading: boolean;
-  loadCatalog: (endpoint?: string) => Promise<void>;
+  snapshot: RelationshipSnapshot;
+  level: "table" | "field";
 }) {
-  const [endpoint, setEndpoint] = useState("demo://tidb");
+  const option = useMemo<EChartsOption>(() => {
+    const visibleNodes = snapshot.nodes.filter((node) =>
+      level === "table" ? node.kind === "table" : node.kind !== "schema",
+    );
+    const nodeIds = new Set(visibleNodes.map((node) => node.id));
+    const visibleEdges = snapshot.edges.filter(
+      (edge) =>
+        (level === "table"
+          ? edge.level === "table"
+          : edge.level === "field" || edge.level === "structure") &&
+        nodeIds.has(edge.source) &&
+        nodeIds.has(edge.target),
+    );
+    const relationCount = new Map<string, number>();
+    visibleEdges.forEach((edge) => {
+      relationCount.set(edge.source, (relationCount.get(edge.source) || 0) + 1);
+      relationCount.set(edge.target, (relationCount.get(edge.target) || 0) + 1);
+    });
+    return {
+      animationDurationUpdate: 450,
+      tooltip: {
+        trigger: "item",
+        renderMode: "richText",
+        formatter: (params: any) => {
+          const data = params.data || {};
+          if (params.dataType === "edge") {
+            return `${data.source}\n→ ${data.target}\n${data.kind} · ${data.sourceType === "sql" ? "SQL 推断" : "元数据"}\n置信度 ${Math.round((data.confidence || 0) * 100)}% · ${data.count || 1} 次`;
+          }
+          return [
+            data.displayLabel || data.name,
+            data.fullName,
+            data.comment || "暂无 Comment",
+            data.dataType || "",
+          ]
+            .filter(Boolean)
+            .join("\n");
+        },
+      },
+      legend: [
+        {
+          bottom: 10,
+          data: ["数据表", "字段"],
+          textStyle: { color: "#64748b" },
+        },
+      ],
+      series: [
+        {
+          type: "graph",
+          layout: "force",
+          roam: true,
+          draggable: true,
+          categories: [
+            { name: "数据表", itemStyle: { color: "#2864dc" } },
+            { name: "字段", itemStyle: { color: "#6b7f95" } },
+          ],
+          data: visibleNodes.map((node) => ({
+            id: node.id,
+            name: node.id,
+            displayLabel: node.label,
+            fullName: node.id,
+            comment: node.comment,
+            dataType: node.data_type,
+            category: node.kind === "table" ? 0 : 1,
+            symbolSize:
+              node.kind === "table"
+                ? 34 + Math.min(relationCount.get(node.id) || 0, 6) * 2
+                : 13,
+            label: {
+              show: node.kind === "table",
+              formatter: node.label,
+              color: "#24364d",
+              position: "bottom",
+              fontSize: 11,
+            },
+          })),
+          links: visibleEdges.map((edge) => ({
+            source: edge.source,
+            target: edge.target,
+            kind: edge.kind,
+            sourceType: edge.source_type,
+            confidence: edge.confidence,
+            count: edge.observation_count,
+            lineStyle: {
+              color:
+                edge.source_type === "sql"
+                  ? "#c27b28"
+                  : edge.source_type === "metadata"
+                    ? "#27845c"
+                    : "#cbd5e1",
+              width:
+                edge.level === "structure"
+                  ? 1
+                  : 1.5 + Math.min(edge.observation_count, 6) * 0.25,
+              opacity: edge.level === "structure" ? 0.38 : 0.82,
+              curveness: 0.08,
+            },
+          })),
+          force: {
+            repulsion: level === "table" ? 420 : 250,
+            edgeLength: level === "table" ? [110, 190] : [70, 125],
+            gravity: 0.08,
+          },
+          emphasis: { focus: "adjacency", lineStyle: { width: 3 } },
+        },
+      ],
+    };
+  }, [snapshot, level]);
+  return <ChartView option={option} />;
+}
+
+function CatalogPage({ setPage }: { setPage: (page: Page) => void }) {
+  const [sources, setSources] = useState<DataSourceRecord[]>([]);
+  const [sourceId, setSourceId] = useState("");
+  const [snapshot, setSnapshot] = useState<RelationshipSnapshot | null>(null);
+  const [activeTab, setActiveTab] = useState<"graph" | "metadata" | "sql">(
+    "graph",
+  );
+  const [graphLevel, setGraphLevel] = useState<"table" | "field">("table");
+  const [sqlInput, setSqlInput] = useState(
+    "SELECT o.order_id, c.region\nFROM sales.orders o\nJOIN sales.customers c ON c.customer_id = o.customer_id;",
+  );
+  const [autoCollect, setAutoCollect] = useState(false);
+  const [collectorStatus, setCollectorStatus] =
+    useState<SqlCollectorStatus | null>(null);
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const selectedSource = sources.find((item) => item.id === sourceId);
+
+  const collectMetadata = async (id = sourceId) => {
+    if (!id) return;
+    setBusy("metadata");
+    setError("");
+    try {
+      const data = await api<RelationshipSnapshot>(
+        `/data-relationships/${id}/collect`,
+        { method: "POST" },
+      );
+      setSnapshot(data);
+      setMessage(
+        `已采集 ${data.schemas.length} 个 Schema、${data.nodes.filter((node) => node.kind === "table").length} 张表`,
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "元数据采集失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const collectSql = async (silent = false) => {
+    if (!sourceId || selectedSource?.kind !== "tidb") return;
+    if (!silent) setBusy("sql-collect");
+    setError("");
+    try {
+      const data = await api<RelationshipSnapshot>(
+        `/data-relationships/${sourceId}/collect-sql`,
+        { method: "POST" },
+      );
+      setSnapshot(data);
+      if (!silent)
+        setMessage(`已更新 ${data.sql_observations.length} 条关联 SQL 摘要`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "关联 SQL 采集失败");
+      setAutoCollect(false);
+    } finally {
+      if (!silent) setBusy("");
+    }
+  };
+  const ingestManualSql = async () => {
+    if (!sourceId || !sqlInput.trim()) return;
+    setBusy("sql-manual");
+    setError("");
+    try {
+      await api(`/data-relationships/${sourceId}/sql-observations`, {
+        method: "POST",
+        body: JSON.stringify({ sql: sqlInput, source: "manual" }),
+      });
+      const data = await api<RelationshipSnapshot>(
+        `/data-relationships/${sourceId}`,
+      );
+      setSnapshot(data);
+      setMessage("SQL 已解析，表级和字段级关系已更新");
+      setActiveTab("graph");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "SQL 关系解析失败");
+    } finally {
+      setBusy("");
+    }
+  };
+  const configureAutoCollect = async (enabled: boolean) => {
+    if (!sourceId || selectedSource?.kind !== "tidb") return;
+    setBusy("collector");
+    setError("");
+    try {
+      const status = await api<SqlCollectorStatus>(
+        `/data-relationships/${sourceId}/sql-collector`,
+        {
+          method: "PUT",
+          body: JSON.stringify({ enabled, interval_seconds: 30 }),
+        },
+      );
+      setCollectorStatus(status);
+      setAutoCollect(status.enabled);
+      if (status.last_error) {
+        setError(`持续采集最近失败：${status.last_error}`);
+      }
+      setMessage(
+        status.enabled
+          ? "服务端持续采集已启动，关闭页面后仍会运行"
+          : "服务端持续采集已停止",
+      );
+      if (status.enabled) {
+        const data = await api<RelationshipSnapshot>(
+          `/data-relationships/${sourceId}`,
+        );
+        setSnapshot(data);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "持续采集设置失败");
+      setAutoCollect(false);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  useEffect(() => {
+    api<DataSourceRecord[]>("/chatbi/datasources")
+      .then((items) => {
+        const databaseSources = items.filter((item) =>
+          ["tidb", "mysql"].includes(item.kind),
+        );
+        setSources(databaseSources);
+        setSourceId(
+          databaseSources.find((item) => item.status === "ready")?.id ||
+            databaseSources[0]?.id ||
+            "",
+        );
+      })
+      .catch((reason) =>
+        setError(reason instanceof Error ? reason.message : "数据源加载失败"),
+      );
+  }, []);
+  useEffect(() => {
+    if (!sourceId) {
+      setSnapshot(null);
+      setAutoCollect(false);
+      setCollectorStatus(null);
+      return;
+    }
+    void collectMetadata(sourceId);
+    api<SqlCollectorStatus>(`/data-relationships/${sourceId}/sql-collector`)
+      .then((status) => {
+        setCollectorStatus(status);
+        setAutoCollect(status.enabled);
+      })
+      .catch((reason) =>
+        setError(
+          reason instanceof Error ? reason.message : "持续采集状态加载失败",
+        ),
+      );
+  }, [sourceId]);
+
+  const tableCount =
+    snapshot?.nodes.filter((node) => node.kind === "table").length || 0;
+  const relationCount =
+    snapshot?.edges.filter((edge) => edge.level !== "structure").length || 0;
+  const sqlCount = snapshot?.sql_observations.length || 0;
+
   return (
-    <section className="content">
+    <section className="content relationship-page">
       <div className="section-head">
         <div>
-          <span className="eyebrow">MCP 元数据采集 · 字段注释 · 关系图</span>
-          <h1>TiDB 数据结构</h1>
+          <span className="eyebrow">Schema · 表 · 字段 Comment · SQL 血缘</span>
+          <h1>数据关系</h1>
+          <p className="section-subtitle">
+            从数据库元数据和关联查询 SQL 持续发现表级、字段级关系。
+          </p>
         </div>
+        <div className="relationship-head-actions">
+          <button
+            className="secondary"
+            disabled={
+              !sourceId ||
+              selectedSource?.kind !== "tidb" ||
+              busy === "sql-collect"
+            }
+            onClick={() => void collectSql()}
+          >
+            <Link2 size={15} />
+            {busy === "sql-collect" ? "采集中…" : "采集关联 SQL"}
+          </button>
+          <button
+            className="primary"
+            disabled={!sourceId || busy === "metadata"}
+            onClick={() => void collectMetadata()}
+          >
+            <RefreshCw size={15} />
+            {busy === "metadata" ? "采集中…" : "采集元数据"}
+          </button>
+        </div>
+      </div>
+      {message && (
+        <div className="notice relationship-notice">
+          <CheckCircle2 size={15} />
+          {message}
+          <button onClick={() => setMessage("")} aria-label="关闭提示">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+      {error && <div className="error-banner">{error}</div>}
+      <div className="relationship-sourcebar panel">
+        <label>
+          <span>数据源</span>
+          <select
+            value={sourceId}
+            onChange={(event) => setSourceId(event.target.value)}
+          >
+            {sources.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name} · {item.kind.toUpperCase()} · {item.status}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="relationship-source-status">
+          <span className={`model-status ${selectedSource?.status || ""}`} />
+          <span>
+            <b>{selectedSource?.name || "尚未添加数据库"}</b>
+            <small>
+              {selectedSource
+                ? `${selectedSource.database || "-"} · ${snapshot?.source || "等待采集"}`
+                : "先到数据源管理添加 TiDB 或 MySQL"}
+            </small>
+          </span>
+        </div>
+        <label className="auto-collect-toggle">
+          <input
+            type="checkbox"
+            checked={autoCollect}
+            disabled={
+              !sourceId ||
+              selectedSource?.kind !== "tidb" ||
+              busy === "collector"
+            }
+            onChange={(event) =>
+              void configureAutoCollect(event.target.checked)
+            }
+          />
+          <span>
+            <b>持续采集 SQL</b>
+            <small>
+              {selectedSource?.kind === "tidb"
+                ? "服务端每 30 秒增量同步"
+                : "自动采集仅支持 TiDB；可手工粘贴 SQL"}
+              {collectorStatus?.last_collected_at
+                ? ` · 最近 ${new Date(collectorStatus.last_collected_at).toLocaleTimeString("zh-CN")}`
+                : ""}
+            </small>
+          </span>
+        </label>
+        {!sources.length && (
+          <button className="primary" onClick={() => setPage("datasources")}>
+            <Plus size={15} />
+            添加数据源
+          </button>
+        )}
+      </div>
+      <div className="relationship-metrics">
+        <div>
+          <Database size={18} />
+          <span>
+            <b>{snapshot?.schemas.length || 0}</b>
+            <small>Schema</small>
+          </span>
+        </div>
+        <div>
+          <PanelsTopLeft size={18} />
+          <span>
+            <b>{tableCount}</b>
+            <small>数据表</small>
+          </span>
+        </div>
+        <div>
+          <Network size={18} />
+          <span>
+            <b>{relationCount}</b>
+            <small>表/字段关系</small>
+          </span>
+        </div>
+        <div>
+          <FileCode2 size={18} />
+          <span>
+            <b>{sqlCount}</b>
+            <small>关联 SQL</small>
+          </span>
+        </div>
+      </div>
+      <div
+        className="relationship-tabs"
+        role="tablist"
+        aria-label="数据关系视图"
+      >
         <button
-          className="primary"
-          onClick={() => void loadCatalog(endpoint)}
-          disabled={loading}
+          className={activeTab === "graph" ? "active" : ""}
+          onClick={() => setActiveTab("graph")}
         >
-          {loading ? "采集中…" : "重新采集"}
+          <Network size={16} />
+          关系网络图
+        </button>
+        <button
+          className={activeTab === "metadata" ? "active" : ""}
+          onClick={() => setActiveTab("metadata")}
+        >
+          <Database size={16} />
+          元数据目录
+        </button>
+        <button
+          className={activeTab === "sql" ? "active" : ""}
+          onClick={() => setActiveTab("sql")}
+        >
+          <FileCode2 size={16} />
+          SQL 采集
         </button>
       </div>
-      <div className="connector-strip">
-        <input
-          value={endpoint}
-          onChange={(e) => setEndpoint(e.target.value)}
-          placeholder="MCP endpoint"
-        />
-        <span className="chip">{catalog?.source || "未连接"}</span>
-      </div>
-      {catalog ? (
-        <>
-          <div className="schema-summary">
-            <Metric
-              label="Schema"
-              value={String(catalog.schemas.length)}
-              hint={catalog.database}
-              tone="blue"
-            />
-            <Metric
-              label="表"
-              value={String(
-                catalog.schemas.reduce(
-                  (sum, schema) => sum + schema.tables.length,
-                  0,
-                ),
-              )}
-              hint="已读取表结构"
-              tone="green"
-            />
-            <Metric
-              label="关系"
-              value={String(catalog.relationships.length)}
-              hint="字段/派生关系"
-              tone="purple"
-            />
+      {!snapshot ? (
+        <div className="relationship-empty panel">
+          <Network size={36} />
+          <b>等待采集数据关系</b>
+          <span>选择可用数据库并点击“采集元数据”。</span>
+        </div>
+      ) : activeTab === "graph" ? (
+        <div className="relationship-graph-layout">
+          <div className="relationship-network panel">
+            <div className="panel-head">
+              <div>
+                <span className="eyebrow">
+                  力导向网络 · 滚轮缩放 · 拖拽节点
+                </span>
+                <h3>
+                  {graphLevel === "table" ? "表与表关系" : "字段与字段关系"}
+                </h3>
+              </div>
+              <div className="segmented">
+                <button
+                  className={graphLevel === "table" ? "active" : ""}
+                  onClick={() => setGraphLevel("table")}
+                >
+                  表级
+                </button>
+                <button
+                  className={graphLevel === "field" ? "active" : ""}
+                  onClick={() => setGraphLevel("field")}
+                >
+                  字段级
+                </button>
+              </div>
+            </div>
+            <RelationshipNetwork snapshot={snapshot} level={graphLevel} />
+            <div className="relationship-legend">
+              <span>
+                <i className="metadata" />
+                数据库约束/元数据
+              </span>
+              <span>
+                <i className="sql" />
+                SQL 推断
+              </span>
+              <span>
+                <i className="structure" />
+                表字段从属
+              </span>
+            </div>
           </div>
-          <div className="schema-layout">
-            <div className="schema-list">
-              {catalog.schemas.map((schema) => (
-                <div className="schema-card panel" key={schema.name}>
-                  <div className="panel-head">
-                    <h3>
-                      <Database size={15} /> {schema.name}
-                    </h3>
-                    <span className="chip">{schema.tables.length} tables</span>
+          <section className="relationship-edge-list panel">
+            <div className="panel-head">
+              <h3>已发现关系</h3>
+              <span className="chip">{relationCount}</span>
+            </div>
+            {snapshot.edges
+              .filter((edge) => edge.level === graphLevel)
+              .sort((a, b) => b.observation_count - a.observation_count)
+              .slice(0, 30)
+              .map((edge) => (
+                <div className="relationship-edge-row" key={edge.id}>
+                  <span className={`edge-source-mark ${edge.source_type}`} />
+                  <div>
+                    <b>{edge.source}</b>
+                    <span>
+                      <ArrowRight size={12} />
+                      {edge.target}
+                    </span>
+                    <small>
+                      {edge.kind} · {edge.observation_count} 次 · 置信度{" "}
+                      {Math.round(edge.confidence * 100)}%
+                    </small>
                   </div>
-                  {schema.tables.map((table) => (
-                    <details key={table.name}>
-                      <summary>
-                        <b>{table.name}</b>
-                        <span>{table.comment || "暂无表 comment"}</span>
-                      </summary>
-                      <div className="column-list">
-                        {table.columns.map((column) => (
-                          <div className="column-row" key={column.name}>
-                            <code>{column.name}</code>
-                            <span>{column.data_type}</span>
-                            <small>
-                              {column.comment || "暂无字段 comment"}
-                            </small>
-                          </div>
-                        ))}
-                      </div>
-                    </details>
-                  ))}
                 </div>
               ))}
-            </div>
-            <div className="relationship-panel panel">
+          </section>
+        </div>
+      ) : activeTab === "metadata" ? (
+        <div className="relationship-metadata-grid">
+          {snapshot.schemas.map((schema) => (
+            <section className="relationship-schema panel" key={schema.name}>
               <div className="panel-head">
                 <h3>
-                  <Network size={15} /> 关系视图
+                  <Database size={15} />
+                  {schema.name}
                 </h3>
-                <span className="chip success">可追溯</span>
+                <span className="chip">{schema.tables.length} tables</span>
               </div>
-              {catalog.relationships.map((edge) => (
-                <div className="edge" key={edge.from + "-" + edge.to}>
-                  <span>{edge.from}</span>
-                  <Link2 size={15} />
-                  <span>{edge.to}</span>
-                  <small>{edge.type}</small>
-                </div>
+              {schema.tables.map((table) => (
+                <details key={table.name}>
+                  <summary>
+                    <span>
+                      <b>{table.name}</b>
+                      <small>{table.comment || "暂无表 Comment"}</small>
+                    </span>
+                    <span>{table.columns.length} 字段</span>
+                  </summary>
+                  <div className="relationship-column-list">
+                    {table.columns.map((column) => (
+                      <div key={column.name}>
+                        <code>{column.name}</code>
+                        <span>{column.data_type}</span>
+                        <small>{column.comment || "暂无字段 Comment"}</small>
+                      </div>
+                    ))}
+                  </div>
+                </details>
               ))}
-            </div>
-          </div>
-        </>
+            </section>
+          ))}
+        </div>
       ) : (
-        <div className="empty panel">尚未采集 TiDB 结构，请点击重新采集。</div>
+        <div className="relationship-sql-layout">
+          <section className="relationship-sql-input panel">
+            <div className="panel-head">
+              <div>
+                <span className="eyebrow">补充采集</span>
+                <h3>粘贴关联查询 SQL</h3>
+              </div>
+              <span className="chip success">仅解析，不执行</span>
+            </div>
+            <textarea
+              value={sqlInput}
+              onChange={(event) => setSqlInput(event.target.value)}
+              spellCheck={false}
+              aria-label="关联查询 SQL"
+            />
+            <div className="relationship-sql-actions">
+              <span>解析 FROM、JOIN 和字段等值条件，合并到关系图。</span>
+              <button
+                className="primary"
+                disabled={!sqlInput.trim() || busy === "sql-manual"}
+                onClick={() => void ingestManualSql()}
+              >
+                <Network size={15} />
+                {busy === "sql-manual" ? "解析中…" : "解析并学习关系"}
+              </button>
+            </div>
+          </section>
+          <section className="relationship-sql-history panel">
+            <div className="panel-head">
+              <h3>采集记录</h3>
+              <span className="chip">{sqlCount} 条摘要</span>
+            </div>
+            {snapshot.sql_observations.length ? (
+              snapshot.sql_observations.map((item) => (
+                <article key={item.id}>
+                  <div>
+                    <span className="chip">{item.source}</span>
+                    <small>
+                      {item.execution_count} 次 · {item.relationship_ids.length}{" "}
+                      条关系
+                    </small>
+                  </div>
+                  <code>{item.sql_preview}</code>
+                  <small>
+                    最近发现{" "}
+                    {new Date(item.last_seen_at).toLocaleString("zh-CN")}
+                  </small>
+                </article>
+              ))
+            ) : (
+              <div className="relationship-sql-empty">尚未采集关联 SQL。</div>
+            )}
+          </section>
+        </div>
       )}
     </section>
   );

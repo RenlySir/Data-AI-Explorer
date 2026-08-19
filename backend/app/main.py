@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 from decimal import Decimal
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -77,9 +78,21 @@ from app.chatbi import (
     ReportCreate,
     create_csv_source,
     create_database_source,
+    collect_recent_sql,
     execute_database_select,
     inspect_database,
+    inspect_database_relationships,
     test_database_source,
+)
+from app.data_relationships import (
+    RelationshipSnapshot,
+    SqlCollectorStatus,
+    SqlCollectorUpdate,
+    SqlObservationRecord,
+    SqlObservationRequest,
+    build_snapshot,
+    clear_datasource_relationships,
+    ingest_sql,
 )
 from app.model_registry import (
     MODEL_CONNECTIONS,
@@ -231,6 +244,9 @@ OPERATIONS: dict[str, QueryOperation] = {}
 CATALOG: TidbCatalog = DEMO_CATALOG
 MCP_CONNECTION: TidbMcpIntrospectRequest | None = None
 DATASETS: dict[str, Dataset] = {}
+RELATIONSHIP_CATALOGS: dict[str, TidbCatalog] = {}
+SQL_COLLECTOR_STATUS: dict[str, SqlCollectorStatus] = {}
+SQL_COLLECTOR_STOPS: dict[str, threading.Event] = {}
 DATASET_DIR = Path(os.getenv("DATASET_STORAGE_DIR", tempfile.gettempdir() + "/aegis-datasets"))
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -638,10 +654,15 @@ def dataset_query(dataset: Dataset, question: str) -> tuple[str, list[str], list
 
 
 def catalog_from_database(item: DataSourceRecord, rows: list[dict[str, Any]]) -> TidbCatalog:
-    tables: dict[str, CatalogTable] = {}
+    schemas: dict[str, dict[str, CatalogTable]] = {}
     for row in rows:
+        schema_name = str(row.get("TABLE_SCHEMA") or row.get("table_schema") or item.database or "tidb")
         table_name = str(row.get("TABLE_NAME") or row.get("table_name") or "unknown")
-        table = tables.setdefault(table_name, CatalogTable(name=table_name, comment=row.get("TABLE_COMMENT") or row.get("table_comment")))
+        tables = schemas.setdefault(schema_name, {})
+        table = tables.setdefault(
+            table_name,
+            CatalogTable(name=table_name, comment=row.get("TABLE_COMMENT") or row.get("table_comment")),
+        )
         table.columns.append(
             CatalogColumn(
                 name=str(row.get("COLUMN_NAME") or row.get("column_name")),
@@ -652,11 +673,90 @@ def catalog_from_database(item: DataSourceRecord, rows: list[dict[str, Any]]) ->
         )
     return TidbCatalog(
         database=item.database or "tidb",
-        schemas=[CatalogSchema(name=item.database or "tidb", tables=list(tables.values()))],
+        schemas=[CatalogSchema(name=name, tables=list(tables.values())) for name, tables in schemas.items()],
         relationships=[],
         source=f"chatbi:{item.id}",
         collected_at=now_iso(),
     )
+
+
+def collect_relationship_snapshot(datasource_id: str) -> RelationshipSnapshot:
+    item = datasource_or_404(datasource_id)
+    if item.kind not in {"tidb", "mysql"}:
+        raise HTTPException(400, "data relationships require a TiDB or MySQL datasource")
+    if item.id == "ds-demo-tidb":
+        catalog = DEMO_CATALOG.model_copy(
+            update={"source": f"chatbi:{item.id}", "collected_at": now_iso()}
+        )
+    else:
+        if item.status != "ready":
+            raise HTTPException(409, "datasource connection must be ready before collection")
+        try:
+            rows, _ = inspect_database(item)
+            relationships = inspect_database_relationships(item)
+        except Exception as exc:
+            raise HTTPException(502, f"datasource metadata collection failed: {exc}") from exc
+        catalog = catalog_from_database(item, rows).model_copy(
+            update={"relationships": relationships, "collected_at": now_iso()}
+        )
+    RELATIONSHIP_CATALOGS[datasource_id] = catalog
+    return build_snapshot(datasource_id, item.name, catalog)
+
+
+def collect_sql_snapshot(datasource_id: str) -> RelationshipSnapshot:
+    item = datasource_or_404(datasource_id)
+    if item.kind != "tidb":
+        raise HTTPException(400, "automatic statement-summary collection requires TiDB")
+    if item.id == "ds-demo-tidb":
+        rows = [
+            {
+                "DIGEST_TEXT": (
+                    "SELECT o.order_id, c.region FROM sales.orders o "
+                    "JOIN sales.customers c ON c.customer_id=o.customer_id"
+                ),
+                "EXEC_COUNT": 18,
+            },
+            {
+                "DIGEST_TEXT": (
+                    "SELECT DATE(o.created_at), SUM(o.amount), d.gmv "
+                    "FROM sales.orders o JOIN reporting.daily_sales d "
+                    "ON d.stat_date=DATE(o.created_at) GROUP BY DATE(o.created_at)"
+                ),
+                "EXEC_COUNT": 6,
+            },
+        ]
+    else:
+        if item.status != "ready":
+            raise HTTPException(409, "datasource connection must be ready before SQL collection")
+        try:
+            rows = collect_recent_sql(item)
+        except Exception as exc:
+            raise HTTPException(502, f"TiDB statement summary collection failed: {exc}") from exc
+    for row in rows:
+        sql = str(row.get("DIGEST_TEXT") or row.get("digest_text") or "").strip()
+        if not sql:
+            continue
+        try:
+            ingest_sql(
+                datasource_id,
+                sql,
+                item.database or "",
+                "tidb-statements-summary",
+                int(row.get("EXEC_COUNT") or row.get("exec_count") or 1),
+                cumulative=True,
+            )
+        except ValueError:
+            continue
+    catalog = RELATIONSHIP_CATALOGS.get(datasource_id)
+    if not catalog:
+        return collect_relationship_snapshot(datasource_id)
+    return build_snapshot(datasource_id, item.name, catalog)
+
+
+def stop_sql_collector(datasource_id: str) -> None:
+    event = SQL_COLLECTOR_STOPS.pop(datasource_id, None)
+    if event:
+        event.set()
 
 
 def datasource_or_404(datasource_id: str) -> DataSourceRecord:
@@ -750,6 +850,151 @@ def tidb_catalog() -> TidbCatalog:
     return CATALOG
 
 
+@app.post(
+    "/api/v1/data-relationships/{datasource_id}/collect",
+    response_model=RelationshipSnapshot,
+    tags=["data-relationships"],
+)
+def collect_data_relationships(datasource_id: str) -> RelationshipSnapshot:
+    return collect_relationship_snapshot(datasource_id)
+
+
+@app.get(
+    "/api/v1/data-relationships/{datasource_id}",
+    response_model=RelationshipSnapshot,
+    tags=["data-relationships"],
+)
+def get_data_relationships(datasource_id: str) -> RelationshipSnapshot:
+    item = datasource_or_404(datasource_id)
+    catalog = RELATIONSHIP_CATALOGS.get(datasource_id)
+    if not catalog:
+        return collect_relationship_snapshot(datasource_id)
+    return build_snapshot(datasource_id, item.name, catalog)
+
+
+@app.post(
+    "/api/v1/data-relationships/{datasource_id}/sql-observations",
+    response_model=SqlObservationRecord,
+    status_code=201,
+    tags=["data-relationships"],
+)
+def add_sql_observation(
+    datasource_id: str, payload: SqlObservationRequest
+) -> SqlObservationRecord:
+    item = datasource_or_404(datasource_id)
+    if item.kind not in {"tidb", "mysql"}:
+        raise HTTPException(400, "SQL relationships require a database datasource")
+    try:
+        return ingest_sql(
+            datasource_id,
+            payload.sql,
+            item.database or "",
+            payload.source,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post(
+    "/api/v1/data-relationships/{datasource_id}/collect-sql",
+    response_model=RelationshipSnapshot,
+    tags=["data-relationships"],
+)
+def collect_datasource_sql(datasource_id: str) -> RelationshipSnapshot:
+    return collect_sql_snapshot(datasource_id)
+
+
+@app.get(
+    "/api/v1/data-relationships/{datasource_id}/sql-collector",
+    response_model=SqlCollectorStatus,
+    tags=["data-relationships"],
+)
+def get_sql_collector(datasource_id: str) -> SqlCollectorStatus:
+    datasource_or_404(datasource_id)
+    return SQL_COLLECTOR_STATUS.get(
+        datasource_id,
+        SqlCollectorStatus(
+            datasource_id=datasource_id,
+            enabled=False,
+            interval_seconds=30,
+        ),
+    )
+
+
+@app.put(
+    "/api/v1/data-relationships/{datasource_id}/sql-collector",
+    response_model=SqlCollectorStatus,
+    tags=["data-relationships"],
+)
+def configure_sql_collector(
+    datasource_id: str, payload: SqlCollectorUpdate
+) -> SqlCollectorStatus:
+    item = datasource_or_404(datasource_id)
+    if item.kind != "tidb":
+        raise HTTPException(400, "automatic statement-summary collection requires TiDB")
+
+    previous = SQL_COLLECTOR_STATUS.get(datasource_id)
+    stop_sql_collector(datasource_id)
+    status = SqlCollectorStatus(
+        datasource_id=datasource_id,
+        enabled=payload.enabled,
+        interval_seconds=payload.interval_seconds,
+        last_collected_at=previous.last_collected_at if previous else None,
+        last_error=previous.last_error if previous else None,
+    )
+    SQL_COLLECTOR_STATUS[datasource_id] = status
+    if not payload.enabled:
+        return status
+
+    try:
+        collect_sql_snapshot(datasource_id)
+        status = status.model_copy(
+            update={"last_collected_at": now_iso(), "last_error": None}
+        )
+    except Exception as exc:
+        status = status.model_copy(
+            update={
+                "last_error": (
+                    str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
+                )
+            }
+        )
+    SQL_COLLECTOR_STATUS[datasource_id] = status
+
+    stop_event = threading.Event()
+    SQL_COLLECTOR_STOPS[datasource_id] = stop_event
+
+    def collect_forever() -> None:
+        while not stop_event.wait(payload.interval_seconds):
+            try:
+                collect_sql_snapshot(datasource_id)
+                last_collected_at = now_iso()
+                last_error = None
+            except Exception as exc:
+                last_collected_at = None
+                last_error = (
+                    str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
+                )
+            if stop_event.is_set():
+                break
+            current = SQL_COLLECTOR_STATUS.get(datasource_id)
+            SQL_COLLECTOR_STATUS[datasource_id] = SqlCollectorStatus(
+                datasource_id=datasource_id,
+                enabled=True,
+                interval_seconds=payload.interval_seconds,
+                last_collected_at=last_collected_at
+                or (current.last_collected_at if current else None),
+                last_error=last_error,
+            )
+
+    threading.Thread(
+        target=collect_forever,
+        name=f"sql-relationship-collector-{datasource_id}",
+        daemon=True,
+    ).start()
+    return status
+
+
 @app.get("/api/v1/chatbi/datasources", response_model=list[DataSourceRecord], tags=["chatbi"])
 def chatbi_datasources() -> list[DataSourceRecord]:
     return list(reversed(list(DATA_SOURCES.values())))
@@ -776,6 +1021,10 @@ def chatbi_delete_datasource(datasource_id: str) -> None:
         raise HTTPException(400, "demo datasource cannot be deleted")
     DATA_SOURCES.pop(datasource_id, None)
     DATA_SOURCE_SECRETS.pop(datasource_id, None)
+    stop_sql_collector(datasource_id)
+    SQL_COLLECTOR_STATUS.pop(datasource_id, None)
+    RELATIONSHIP_CATALOGS.pop(datasource_id, None)
+    clear_datasource_relationships(datasource_id)
 
 
 @app.post("/api/v1/chatbi/datasources/upload", response_model=DataSourceRecord, status_code=201, tags=["chatbi"])
