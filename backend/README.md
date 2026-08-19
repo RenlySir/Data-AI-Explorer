@@ -41,4 +41,14 @@ OpenAPI is available at http://localhost:8080/docs. The API is prefixed with `/a
 
 Simulation is an explainable hypothesis based on the SQL AST, DDL, SQLAdvisor-style index ordering and TiDB minor-version profiles. It is deliberately labelled as simulated and never presented as TiDB optimizer output. Production validation requires `live` mode against the requested TiDB version.
 
+## Scenario Center APIs
+
+- `GET /api/v1/scenarios`: list the 12 versioned Agent Team scenario templates, optionally filtered by category or status.
+- `POST /api/v1/scenarios/{scenario_id}/runs`: create a traceable scenario run with an objective and context.
+- `GET /api/v1/scenario-runs`: list current run instances and states.
+- `POST /api/v1/scenario-runs/{run_id}/advance`: complete one low/medium-risk step or stop at a high-risk approval gate.
+- `POST /api/v1/scenario-runs/{run_id}/approve`: approve only the current high-risk step. Advancing without approval returns HTTP 409.
+
+Local runs record deterministic demo evidence and do not claim that Prometheus, Airflow, GitLab, Rundeck or other production systems were called. Those systems are connected through deployment-specific adapters.
+
 MCP tool names are discovered from the server and matched against aliases (`list_schemas`, `list_tables`, `describe_table`, `execute_query`). If a server uses different names, pass a `tool_map` in the introspection request.

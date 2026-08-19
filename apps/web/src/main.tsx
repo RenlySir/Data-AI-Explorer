@@ -24,9 +24,18 @@ import {
   ShieldCheck,
   GitCompareArrows,
   CircleAlert,
+  Workflow,
+  Bot,
+  ListChecks,
+  PlayCircle,
+  PauseCircle,
+  CircleCheck,
+  ArrowRight,
+  RefreshCw,
 } from "lucide-react";
 import "./styles.css";
 import "./optimizer.css";
+import "./scenarios.css";
 
 type Page =
   | "workbench"
@@ -34,7 +43,8 @@ type Page =
   | "incidents"
   | "assets"
   | "catalog"
-  | "sql-optimizer";
+  | "sql-optimizer"
+  | "scenarios";
 type Catalog = {
   database: string;
   source: string;
@@ -114,6 +124,45 @@ type OptimizeResult = {
   version_features: string[];
   assumptions: string[];
   sources: { label: string; url: string; ref: string }[];
+};
+type ScenarioStep = {
+  id: string;
+  title: string;
+  role: string;
+  description: string;
+  action: string;
+  risk: "low" | "medium" | "high";
+  status: "queued" | "running" | "waiting_approval" | "completed" | "skipped";
+  evidence: string[];
+};
+type Scenario = {
+  id: string;
+  name: string;
+  category: string;
+  summary: string;
+  value: string;
+  agents: string[];
+  triggers: string[];
+  integrations: string[];
+  approval_policy: string;
+  metrics: string[];
+  steps: ScenarioStep[];
+  status: "ready" | "running" | "waiting_approval" | "completed" | "failed";
+};
+type ScenarioRun = {
+  run_id: string;
+  scenario_id: string;
+  scenario_name: string;
+  objective: string;
+  context: string;
+  status: "ready" | "running" | "waiting_approval" | "completed" | "failed";
+  created_at: string;
+  updated_at: string;
+  current_step_id?: string;
+  steps: ScenarioStep[];
+  approvals_required: number;
+  approvals_granted: number;
+  audit: string[];
 };
 const API_BASE = (
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api/v1"
@@ -210,6 +259,7 @@ function App() {
     ["workbench", "工作台", LayoutDashboard],
     ["query", "智能问数", MessageSquare],
     ["incidents", "AIOps 事件", Activity],
+    ["scenarios", "场景中心", Workflow],
     ["sql-optimizer", "SQL 优化", WandSparkles],
     ["assets", "数据资产", Database],
     ["catalog", "TiDB 结构", Network],
@@ -291,6 +341,7 @@ function App() {
           <QueryV2 catalog={catalog} loadCatalog={loadCatalog} />
         )}{" "}
         {page === "incidents" && <Incidents />}{" "}
+        {page === "scenarios" && <ScenarioCenter />}{" "}
         {page === "sql-optimizer" && <SQLOptimizerPage />}{" "}
         {page === "assets" && <AssetsV2 />}{" "}
         {page === "catalog" && (
@@ -1041,6 +1092,66 @@ function CatalogPage({
       )}
     </section>
   );
+}
+function scenarioStatusLabel(status: ScenarioRun["status"] | Scenario["status"] | ScenarioStep["status"]) {
+  return ({ ready: "可运行", running: "运行中", waiting_approval: "等待审批", completed: "已完成", failed: "失败", queued: "排队中", skipped: "已跳过" } as Record<string, string>)[status] || status;
+}
+function scenarioStatusClass(status: string) {
+  return "scenario-status " + status.replace("_", "-");
+}
+function ScenarioCenter() {
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  const [runs, setRuns] = useState<ScenarioRun[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [category, setCategory] = useState("全部");
+  const [objective, setObjective] = useState("检查今晚的关键任务与系统风险，并给出可执行的处置结果");
+  const [context, setContext] = useState("");
+  const [selectedRun, setSelectedRun] = useState<ScenarioRun | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const load = async () => {
+    try {
+      const [items, existing] = await Promise.all([api<Scenario[]>("/scenarios"), api<ScenarioRun[]>("/scenario-runs")]);
+      setScenarios(items); setRuns(existing);
+      setSelectedId((current) => current || items[0]?.id || "");
+      setSelectedRun((current) => current || existing[0] || null);
+    } catch (e) { setError(e instanceof Error ? e.message : "场景加载失败"); }
+  };
+  useEffect(() => {
+    void load();
+  }, []);
+  const categories = ["全部", ...Array.from(new Set(scenarios.map((item) => item.category)))];
+  const filtered = scenarios.filter((item) => category === "全部" || item.category === category);
+  const selected = scenarios.find((item) => item.id === selectedId) || filtered[0];
+  const start = async () => {
+    if (!selected || !objective.trim()) return;
+    setBusy(true); setError("");
+    try {
+      const run = await api<ScenarioRun>(`/scenarios/${selected.id}/runs`, { method: "POST", body: JSON.stringify({ objective, context }) });
+      setSelectedRun(run); setRuns((current) => [run, ...current]);
+    } catch (e) { setError(e instanceof Error ? e.message : "启动场景失败"); } finally { setBusy(false); }
+  };
+  const updateRun = async (action: "advance" | "approve") => {
+    if (!selectedRun) return;
+    setBusy(true); setError("");
+    try {
+      const run = await api<ScenarioRun>(`/scenario-runs/${selectedRun.run_id}/${action}`, { method: "POST" });
+      setSelectedRun(run); setRuns((current) => current.map((item) => item.run_id === run.run_id ? run : item));
+    } catch (e) { setError(e instanceof Error ? e.message : "场景状态更新失败"); } finally { setBusy(false); }
+  };
+  return <section className="content scenario-page">
+    <div className="section-head"><div><span className="eyebrow">Agent Team · 定时触发 · 任务留痕 · 人工审批</span><h1>场景中心</h1><p className="section-subtitle">把多场景探索中的协作模式落成可配置、可运行、可追踪的企业 AI 控制平面。</p></div><button className="secondary" onClick={() => void load()}><RefreshCw size={16}/>刷新场景</button></div>
+    {error && <div className="error-banner">{error}</div>}
+    <div className="scenario-summary"><Metric label="场景模板" value={String(scenarios.length)} hint="来自多场景探索" tone="blue"/><Metric label="运行实例" value={String(runs.length)} hint="可追踪任务" tone="green"/><Metric label="待审批" value={String(runs.filter((item) => item.status === "waiting_approval").length)} hint="高风险动作已阻断" tone="red"/><Metric label="已接入模式" value="只读优先" hint="Runbook 可扩展" tone="purple"/></div>
+    <div className="scenario-layout">
+      <div className="scenario-library panel"><div className="panel-head"><h3><Workflow size={16}/>场景模板</h3><span className="chip">{filtered.length} 个</span></div><div className="scenario-filters">{categories.map((item) => <button key={item} className={category === item ? "filter active" : "filter"} onClick={() => setCategory(item)}>{item}</button>)}</div><div className="scenario-list">{filtered.map((item) => <button key={item.id} className={selected?.id === item.id ? "scenario-card active" : "scenario-card"} onClick={() => setSelectedId(item.id)}><div className="scenario-card-top"><span className="scenario-icon"><Bot size={16}/></span><span className="chip">{item.category}</span></div><b>{item.name}</b><p>{item.summary}</p><small>{item.agents.length} 个 Agent · {item.steps.length} 个步骤</small></button>)}</div></div>
+      <div className="scenario-detail">
+        {selected ? <><div className="panel scenario-hero"><div className="scenario-hero-top"><div><span className="eyebrow">{selected.category}</span><h2>{selected.name}</h2><p>{selected.summary}</p></div><span className={scenarioStatusClass(selected.status)}>{scenarioStatusLabel(selected.status)}</span></div><div className="scenario-value"><b>提效价值</b><span>{selected.value}</span></div><div className="scenario-tags">{selected.triggers.map((item) => <span className="chip" key={item}>触发 · {item}</span>)}{selected.integrations.slice(0, 4).map((item) => <span className="chip" key={item}>连接 · {item}</span>)}</div></div><div className="scenario-columns"><div className="panel"><div className="panel-head"><h3><Bot size={16}/>Agent 阵容</h3><span className="chip">{selected.agents.length}</span></div><div className="agent-list">{selected.agents.map((item, index) => <div className="agent-row" key={item}><span>{String(index + 1).padStart(2, "0")}</span><b>{item}</b></div>)}</div><div className="policy-box"><b>审批策略</b><p>{selected.approval_policy}</p></div></div><div className="panel"><div className="panel-head"><h3><ListChecks size={16}/>执行步骤</h3><span className="chip">顺序与并行可编排</span></div><div className="template-steps">{selected.steps.map((item, index) => <div className="template-step" key={item.id}><span className="step-index">{index + 1}</span><div><b>{item.title}</b><span>{item.role} · {item.description}</span></div><span className={"risk-pill " + item.risk}>{item.risk === "high" ? "高风险" : item.risk === "medium" ? "需确认" : "只读"}</span></div>)}</div></div></div><div className="panel scenario-launch"><div className="panel-head"><div><h3>启动一次协作任务</h3><span className="panel-help">任务会创建根实例，步骤完成前保留审计和证据。</span></div><span className="chip success">审批门禁已开启</span></div><textarea value={objective} onChange={(event) => setObjective(event.target.value)} placeholder="本次任务目标"/><input value={context} onChange={(event) => setContext(event.target.value)} placeholder="可选上下文：环境、时间范围、服务或业务范围"/><button className="primary" onClick={start} disabled={busy || !objective.trim()}><PlayCircle size={16}/>{busy ? "提交中…" : "启动场景"}</button></div></> : <div className="empty panel">暂无场景模板</div>}
+      </div>
+    </div>
+    <div className="scenario-runs panel"><div className="panel-head"><h3><ListChecks size={16}/>最近运行实例</h3><span className="chip">{runs.length} 条</span></div>{runs.length === 0 ? <div className="empty">启动一个场景后，运行记录会显示在这里。</div> : runs.slice(0, 5).map((run) => <button className={selectedRun?.run_id === run.run_id ? "run-row active" : "run-row"} key={run.run_id} onClick={() => setSelectedRun(run)}><div className="run-status-dot"/><div className="row-main"><b>{run.scenario_name}</b><span>{run.objective}</span></div><span className={scenarioStatusClass(run.status)}>{scenarioStatusLabel(run.status)}</span><small>{run.run_id}</small><ArrowRight size={15}/></button>)}</div>
+    {selectedRun && <div className="panel run-detail"><div className="panel-head"><div><span className="eyebrow">运行实例 · {selectedRun.run_id}</span><h3>{selectedRun.scenario_name}</h3></div><div className="run-actions"><span className={scenarioStatusClass(selectedRun.status)}>{scenarioStatusLabel(selectedRun.status)}</span>{selectedRun.status === "waiting_approval" ? <button className="primary" onClick={() => void updateRun("approve")} disabled={busy}><ShieldCheck size={16}/>批准当前动作</button> : selectedRun.status !== "completed" && <button className="secondary" onClick={() => void updateRun("advance")} disabled={busy}><PlayCircle size={16}/>推进一步</button>}</div></div><div className="run-progress"><div className="progress-track"><span style={{ width: `${Math.round(selectedRun.steps.filter((item) => item.status === "completed").length / Math.max(selectedRun.steps.length, 1) * 100)}%` }}/></div><small>{selectedRun.steps.filter((item) => item.status === "completed").length}/{selectedRun.steps.length} 步完成 · 审批 {selectedRun.approvals_granted}/{selectedRun.approvals_required}</small></div><div className="run-step-list">{selectedRun.steps.map((item) => <div className="run-step" key={item.id}><div className={"run-step-icon " + item.status}>{item.status === "completed" ? <CircleCheck size={16}/> : item.status === "waiting_approval" ? <PauseCircle size={16}/> : <Clock3 size={16}/>}</div><div className="row-main"><b>{item.title}</b><span>{item.role} · {item.action}</span>{item.evidence.map((evidence) => <small key={evidence}>{evidence}</small>)}</div><span className={scenarioStatusClass(item.status)}>{scenarioStatusLabel(item.status)}</span></div>)}</div><div className="audit-list"><b>审计轨迹</b>{selectedRun.audit.slice(-5).map((item) => <span key={item}>{item}</span>)}</div></div>}
+  </section>;
 }
 function SQLOptimizerPage() {
   const [versions, setVersions] = useState<OptimizerVersion[]>([]);

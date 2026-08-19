@@ -29,6 +29,15 @@ from app.sql_optimizer import (
     normalize_version,
     version_matches,
 )
+from app.scenario_catalog import (
+    SCENARIO_BY_ID,
+    SCENARIO_RUNS,
+    SCENARIO_TEMPLATES,
+    ScenarioRun,
+    ScenarioRunCreate,
+    now_iso as scenario_now_iso,
+    new_run,
+)
 
 
 def now_iso() -> str:
@@ -607,6 +616,99 @@ async def optimize_tidb_sql(payload: SQLOptimizeRequest) -> SQLOptimizeResponse:
         raise
     except Exception as exc:
         raise HTTPException(502, f"TiDB live optimization failed: {exc.__class__.__name__}") from exc
+
+
+@app.get("/api/v1/scenarios", tags=["scenarios"])
+def list_scenarios(category: str | None = Query(None), status: str | None = Query(None)) -> list[dict[str, Any]]:
+    return [item.model_dump() for item in SCENARIO_TEMPLATES if (not category or item.category == category) and (not status or item.status == status)]
+
+
+@app.get("/api/v1/scenarios/{scenario_id}", tags=["scenarios"])
+def get_scenario(scenario_id: str) -> dict[str, Any]:
+    template = SCENARIO_BY_ID.get(scenario_id)
+    if not template:
+        raise HTTPException(404, "scenario not found")
+    return template.model_dump()
+
+
+@app.post("/api/v1/scenarios/{scenario_id}/runs", response_model=ScenarioRun, status_code=201, tags=["scenarios"])
+def create_scenario_run(scenario_id: str, payload: ScenarioRunCreate) -> ScenarioRun:
+    template = SCENARIO_BY_ID.get(scenario_id)
+    if not template:
+        raise HTTPException(404, "scenario not found")
+    run = new_run(template, payload)
+    SCENARIO_RUNS[run.run_id] = run
+    return run
+
+
+@app.get("/api/v1/scenario-runs", response_model=list[ScenarioRun], tags=["scenarios"])
+def list_scenario_runs(status: str | None = Query(None), scenario_id: str | None = Query(None)) -> list[ScenarioRun]:
+    return [item for item in reversed(list(SCENARIO_RUNS.values())) if (not status or item.status == status) and (not scenario_id or item.scenario_id == scenario_id)]
+
+
+@app.get("/api/v1/scenario-runs/{run_id}", response_model=ScenarioRun, tags=["scenarios"])
+def get_scenario_run(run_id: str) -> ScenarioRun:
+    run = SCENARIO_RUNS.get(run_id)
+    if not run:
+        raise HTTPException(404, "scenario run not found")
+    return run
+
+
+@app.post("/api/v1/scenario-runs/{run_id}/advance", response_model=ScenarioRun, tags=["scenarios"])
+def advance_scenario_run(run_id: str) -> ScenarioRun:
+    run = SCENARIO_RUNS.get(run_id)
+    if not run:
+        raise HTTPException(404, "scenario run not found")
+    if run.status in ("completed", "failed"):
+        return run
+    current_index = next((index for index, item in enumerate(run.steps) if item.id == run.current_step_id), None)
+    if current_index is None:
+        run.status = "completed"
+        run.updated_at = scenario_now_iso()
+        return run
+    current = run.steps[current_index]
+    approved = any(item.startswith("人工审批通过") for item in current.evidence)
+    if current.risk == "high" and not approved:
+        if current.status == "waiting_approval":
+            raise HTTPException(409, "high-risk step requires approval before execution")
+        now = scenario_now_iso()
+        current.status = "waiting_approval"
+        run.status = "waiting_approval"
+        run.updated_at = now
+        run.audit.append(f"{now} {current.title} 需要人工审批，已阻断执行")
+        return run
+    now = scenario_now_iso()
+    current.status = "completed"
+    current.evidence.append(f"演示执行记录：{current.action}")
+    run.audit.append(f"{now} 完成步骤：{current.title}")
+    next_step = run.steps[current_index + 1] if current_index + 1 < len(run.steps) else None
+    if next_step:
+        next_step.status = "running"
+        run.current_step_id = next_step.id
+        run.status = "running"
+    else:
+        run.current_step_id = None
+        run.status = "completed"
+    run.updated_at = now
+    return run
+
+
+@app.post("/api/v1/scenario-runs/{run_id}/approve", response_model=ScenarioRun, tags=["scenarios"])
+def approve_scenario_run(run_id: str) -> ScenarioRun:
+    run = SCENARIO_RUNS.get(run_id)
+    if not run:
+        raise HTTPException(404, "scenario run not found")
+    current = next((item for item in run.steps if item.id == run.current_step_id), None)
+    if run.status != "waiting_approval" or current is None or current.risk != "high":
+        raise HTTPException(409, "scenario run is not waiting for a high-risk approval")
+    run.approvals_granted += 1
+    now = scenario_now_iso()
+    current.evidence.append(f"人工审批通过：{now}")
+    current.status = "running"
+    run.status = "running"
+    run.audit.append(f"{now} 人工审批通过：{current.title}")
+    run.updated_at = now
+    return run
 
 
 @app.get("/api/v1/incidents", response_model=list[Incident], tags=["aiops"])

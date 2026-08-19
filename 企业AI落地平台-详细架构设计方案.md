@@ -175,6 +175,10 @@ approvalPolicy: ops-single
 
 ### 5.7 Agent Orchestrator 与智能指挥
 
+场景中心在此之上提供统一 Scenario Catalog 和 Scenario Run 状态机。Catalog 保存 12 个场景模板的 Agent、触发器、集成、风险和指标；Run 保存目标、上下文、当前步骤、证据、审批计数和审计。高风险步骤状态转换为 `WAITING_APPROVAL`，未获得当前步骤审批时任何推进请求返回冲突，不能通过客户端绕过。
+
+外部系统采用 Adapter SPI，统一暴露连接测试、只读查询、动作 Schema、权限声明、超时、幂等键和结果标准化。首期 Adapter 对接调度、可观测性、TiDB、代码交付、安全、成本和项目系统；生产执行仍由 Executor Gateway 接管。
+
 Agent 是受控工作流角色，不是无限循环机器人。定义包含目标、允许工具、数据范围、模型、最大步数、Token/时间预算、升级条件和输出 Schema。
 
 Temporal Workflow 持久化每个根任务；专业 Agent 作为 Activity 并行执行。指挥官只能分派预注册能力，不能临时提升权限。上下文分为会话记忆、工作区知识、事件证据；长期记忆写入前必须脱敏、标注来源并经过保留策略。

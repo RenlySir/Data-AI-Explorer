@@ -194,6 +194,8 @@ Evidence 只保存引用和摘要，原始日志/指标通过 connector 临时�
 
 ## 9. Runbook、Executor 与审批
 
+场景中心的 Scenario Template/Run 是 Runbook 与审批的上层业务对象。Template 采用版本化定义，Run 创建时复制步骤快照，避免模板更新影响进行中的任务。低风险步骤可由 Orchestrator 推进；高风险步骤进入审批状态，审批 API 使用当前步骤 ID、风险和输入快照做服务端校验。Adapter 返回的工具输出只作为 Evidence 引用和摘要，不能由模型直接改写为“已执行成功”。
+
 Runbook YAML 经 JSON Schema 校验，解析为不可变 `RunbookVersion`。动作插件包含输入 Schema、风险等级、权限、dry-run、执行、验证和回滚方法。
 
 执行 Workflow：创建快照 → Policy Evaluate → Dry Run → 创建审批 → 等待审批 → 签名任务 → Executor 执行 → 回传证据 → 验证 → 成功或回滚。Executor 只接受任务签名、租户、目标环境和 plugin/action，不执行任意命令字符串。
